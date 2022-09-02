@@ -1,0 +1,88 @@
+all:
+  hosts:
+
+    localhost:
+
+    # All of this should obviously come from some other inventory plugin.
+
+    evil-vm:
+      inv__data:
+        network: death
+        service: evil
+        instance: chaos
+
+    vm00:
+      inv__data:
+        network: dev
+        service: ldap
+        instance: dev
+        component: front
+        fostack: 1
+    vm01:
+      inv__data:
+        network: dev
+        service: ldap
+        instance: dev
+        component: front
+        fostack: 2
+    vm02:
+      inv__data:
+        network: dev
+        service: ldap
+        instance: dev
+        component: back
+        subcomponent: ro
+        fostack: 1
+    vm03:
+      inv__data:
+        network: dev
+        service: ldap
+        instance: dev
+        component: back
+        subcomponent: ro
+        fostack: 2
+    vm04:
+      inv__data:
+        network: dev
+        service: ldap
+        instance: dev
+        component: back
+        subcomponent: rw
+
+    vm05:
+      inv__data:
+        network: infra
+        service: ldap
+        instance: prod
+        component: front
+        fostack: 1
+    vm06:
+      inv__data:
+        network: infra
+        service: ldap
+        instance: prod
+        component: front
+        fostack: 2
+    vm07:
+      inv__data:
+        network: infra
+        service: ldap
+        instance: prod
+        component: back
+        subcomponent: ro
+        fostack: 1
+    vm08:
+      inv__data:
+        network: infra
+        service: ldap
+        instance: prod
+        component: back
+        subcomponent: ro
+        fostack: 2
+    vm09:
+      inv__data:
+        network: infra
+        service: ldap
+        instance: dev
+        component: back
+        subcomponent: rw

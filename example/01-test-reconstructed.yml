@@ -14,18 +14,33 @@ instructions:
     action: stop
 
   # Fail when the host name starts with "evil".
-  - when: inventory_hostname.startswith( 'evil' )
-    action: fail
-    msg: "{{ inventory_hostname }} is obviously evil, skipping."
+  - action: block
+    block:
+      - when: inventory_hostname.startswith( 'evil' )
+        action: fail
+        msg: "{{ inventory_hostname }} is obviously evil, skipping."
+    rescue:
+      # Do not crash on redeemably evil VMs, but still skip them.
+      - when: inv__data.unredeemable is defined
+        action: fail
+        msg: "{{ reconstructed_error }}"
+      - action: create_group
+        group: reedmably_evil
+      - action: add_host
+        group: reedmably_evil
+      - action: stop
 
   # Only create the managed groups if we *have* managed hosts
-  - loop: [managed, by_environment, by_network, by_failover_stack, by_service]
-    action: create_group
-    group: "{{ item }}"
-  - loop: [by_environment, by_network, by_failover_stack, by_service]
-    action: add_child
+  - action: create_group
     group: managed
-    child: "{{ item }}"
+  - loop: [by_environment, by_network, by_failover_stack, by_service]
+    action: block
+    block:
+      - action: create_group
+        group: "{{ item }}"
+      - action: add_child
+        group: managed
+        child: "{{ item }}"
 
   # Copy inv__data fields to separate inv__ variables
   - loop:
@@ -98,32 +113,28 @@ instructions:
 
   # Component group. We add the host directly if there is no subcomponent.
   - when: inv__component is defined
-    action: set_var
-    name: comp_group
-    value: "svcm_{{ inv__service }}_{{ inv__component }}"
-  - when: inv__component is defined
-    action: create_group
-    group: "{{ comp_group }}"
-  - when: inv__component is defined
-    action: add_child
-    group: "{{ service_group }}"
-    child: "{{ comp_group }}"
-  - when: inv__component is defined and inv__subcomponent is not defined
-    action: add_host
-    group: "{{ comp_group }}"
-
-  # Subcomponent group.
-  - when: inv__component is defined and inv__subcomponent is defined
-    action: set_var
-    name: subcomp_group
-    value: "svcm_{{ inv__service }}_{{ inv__subcomponent }}"
-  - when: inv__component is defined and inv__subcomponent is defined
-    action: create_group
-    group: "{{ subcomp_group }}"
-  - when: inv__component is defined and inv__subcomponent is defined
-    action: add_child
-    group: "{{ comp_group }}"
-    child: "{{ subcomp_group }}"
-  - when: inv__component is defined and inv__subcomponent is defined
-    action: add_host
-    group: "{{ subcomp_group }}"
+    action: block
+    locals:
+      comp_group: "svcm_{{ inv__service }}_{{ inv__component }}"
+    block:
+    - action: create_group
+      group: "{{ comp_group }}"
+    - action: add_child
+      group: "{{ service_group }}"
+      child: "{{ comp_group }}"
+    # Subcomponent group, or lack thereof.
+    - when: inv__subcomponent is not defined
+      action: add_host
+      group: "{{ comp_group }}"
+    - when: inv__subcomponent is defined
+      action: block
+      locals:
+        subcomp_group: "svcm_{{ inv__service }}_{{ inv__subcomponent }}"
+      block:
+      - action: create_group
+        group: "{{ subcomp_group }}"
+      - action: add_child
+        group: "{{ comp_group }}"
+        child: "{{ subcomp_group }}"
+      - action: add_host
+        group: "{{ subcomp_group }}"

@@ -10,6 +10,12 @@ all:
         network: death
         service: evil
         instance: chaos
+        unredeemable: true
+    evil-but-nicer-vm:
+      inv__data:
+        network: death
+        service: evil
+        instance: chaos
 
     vm00:
       inv__data:

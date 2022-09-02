@@ -106,6 +106,8 @@ skipping.
   |  |  |  |  |--vm01
   |  |  |  |  |--vm05
   |  |  |  |  |--vm06
+  |--@reedmably_evil:
+  |  |--evil-but-nicer-vm
   |--@ungrouped:
   |  |--evil-vm
   |  |--localhost

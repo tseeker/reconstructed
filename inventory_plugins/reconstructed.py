@@ -37,6 +37,16 @@ DOCUMENTATION = """
           representing a condition which will be checked before the instruction
           is executed.
         - The C(action) field must be set to one of the following values.
+        - The C(block) action is another form of flow control, which can be
+          used to repeat multiple instructions or make them obey a single
+          conditional. The instruction must include a C(block) field, containing
+          the list of instructions which are part of the block. In addition, it
+          may have a C(rescue) field, containing a list of instructions which
+          will be executed on error, and C(always), which may contain a list
+          of instructions to execute in all cases. If the C(locals) field is
+          defined, it must contain a table of local variables to define. Any
+          local variable defined by the instructions under C(block), C(rescue)
+          or C(always) will go out of scope once the block finishes executing.
         - C(create_group) creates a group. The name of the group must be
           provided using the C(group) field, which must be a valid name or a
           Jinja template that evaluates to a valid name.
@@ -157,8 +167,10 @@ class RcInstruction:
         if self._loop is None:
             return self.run_once(host_name, merged_vars, host_vars, script_vars)
         loop_values = self.evaluate_loop(host_name, merged_vars)
+        script_vars = script_vars.copy()
         for value in loop_values:
             merged_vars[self._loop_var] = value
+            script_vars[self._loop_var] = value
             if not self.run_once(host_name, merged_vars, host_vars, script_vars):
                 return False
         return True
@@ -370,15 +382,119 @@ class RciFail(RcInstruction):
         raise AnsibleRuntimeError(message)
 
 
+class RciBlock(RcInstruction):
+    def __init__(self, inventory, templar):
+        super().__init__(
+            inventory, templar, "block", ("block", "rescue", "always", "locals")
+        )
+        self._block = None
+        self._rescue = None
+        self._always = None
+        self._locals = None
+
+    def parse_action(self, record):
+        assert (
+            self._block is None
+            and self._rescue is None
+            and self._always is None
+            and self._locals is None
+        )
+        if "block" not in record:
+            raise AnsibleParserError("%s: missing 'block' field" % (self._action,))
+        self._block = self.parse_block(record, "block")
+        if "rescue" in record:
+            self._rescue = self.parse_block(record, "rescue")
+        else:
+            self._rescue = []
+        if "always" in record:
+            self._always = self.parse_block(record, "always")
+        else:
+            self._always = []
+        if "locals" in record:
+            if not isinstance(record["locals"], dict):
+                raise AnsibleParserError(
+                    "%s: 'locals' should be a dictionnary" % (self._action,)
+                )
+            for k, v in record["locals"].items():
+                if not isinstance(k, string_types):
+                    raise AnsibleParserError(
+                        "%s: locals identifiers must be strings" % (self._action,)
+                    )
+                if not isidentifier(k):
+                    raise AnsibleParserError(
+                        "%s: '%s' is not a valid identifier" % (self._action, k)
+                    )
+            self._locals = record["locals"]
+        else:
+            self._locals = {}
+
+    def parse_block(self, record, key):
+        if not isinstance(record[key], list):
+            raise AnsibleParserError(
+                "%s: '%s' field must contain a list of instructions"
+                % (self._action, key)
+            )
+        instructions = []
+        for record in record[key]:
+            instructions.append(
+                parse_instruction(self._inventory, self._templar, record)
+            )
+        return instructions
+
+    def execute_action(self, host_name, merged_vars, host_vars, script_vars):
+        assert not (
+            self._block is None
+            or self._rescue is None
+            or self._always is None
+            or self._locals is None
+        )
+        merged_vars = merged_vars.copy()
+        script_vars = script_vars.copy()
+        self._templar.available_variables = merged_vars
+        for key, value in self._locals.items():
+            result = self._templar.template(value)
+            script_vars[key] = result
+            merged_vars[key] = result
+        try:
+            try:
+                return self.run_block(
+                    self._block, host_name, merged_vars, host_vars, script_vars
+                )
+            except AnsibleError as e:
+                script_vars["reconstructed_error"] = str(e)
+                merged_vars["reconstructed_error"] = str(e)
+                return self.run_block(
+                    self._rescue, host_name, merged_vars, host_vars, script_vars
+                )
+        finally:
+            self.run_block(self._always, host_name, merged_vars, host_vars, script_vars)
+
+    def run_block(self, block, host_name, merged_vars, host_vars, script_vars):
+        for instruction in block:
+            if not instruction.run_for(host_name, host_vars, script_vars):
+                return False
+        return True
+
+
 INSTRUCTIONS = {
     "add_child": RciAddChild,
     "add_host": RciAddHost,
+    "block": RciBlock,
     "create_group": RciCreateGroup,
     "fail": RciFail,
     "set_fact": lambda i, t: RciSetVarOrFact(i, t, True),
     "set_var": lambda i, t: RciSetVarOrFact(i, t, False),
     "stop": RciStop,
 }
+
+
+def parse_instruction(inventory, templar, record):
+    action = record["action"]
+    if action not in INSTRUCTIONS:
+        raise AnsibleParserError("Unknown action '%s'" % (action,))
+    instruction = INSTRUCTIONS[action](inventory, templar)
+    instruction.parse(record)
+    return instruction
 
 
 class InventoryModule(BaseInventoryPlugin):
@@ -395,7 +511,7 @@ class InventoryModule(BaseInventoryPlugin):
         instr_src = self.get_option("instructions")
         instructions = []
         for record in instr_src:
-            instructions.append(self.get_instruction(record))
+            instructions.append(parse_instruction(self.inventory, self.templar, record))
         for host in inventory.hosts:
             try:
                 self.exec_for_host(host, instructions)
@@ -412,11 +528,3 @@ class InventoryModule(BaseInventoryPlugin):
         for instruction in instructions:
             if not instruction.run_for(host, host_vars, script_vars):
                 return
-
-    def get_instruction(self, record):
-        action = record["action"]
-        if action not in INSTRUCTIONS:
-            raise AnsibleParserError("Unknown action '%s'" % (action,))
-        instruction = INSTRUCTIONS[action](self.inventory, self.templar)
-        instruction.parse(record)
-        return instruction

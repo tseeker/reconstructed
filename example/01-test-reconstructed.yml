@@ -34,13 +34,9 @@ instructions:
   - action: create_group
     group: managed
   - loop: [by_environment, by_network, by_failover_stack, by_service]
-    action: block
-    block:
-      - action: create_group
-        group: "{{ item }}"
-      - action: add_child
-        group: managed
-        child: "{{ item }}"
+    action: create_group
+    group: "{{ item }}"
+    parent: managed
 
   # Copy inv__data fields to separate inv__ variables
   - loop:
@@ -67,39 +63,24 @@ instructions:
       }}
   - action: create_group
     group: "env_{{ inv__environment }}"
-  - action: add_child
-    group: by_environment
-    child: "env_{{ inv__environment }}"
-  - action: add_host
-    group: "env_{{ inv__environment }}"
+    parent: by_environment
+    add_host: true
 
   # Failover stack group
-  - action: set_var
-    name: failover_group
-    value: >-
+  - action: create_group
+    group: >-
       {{
         ( inv__fostack is defined )
         | ternary( "fostack_" ~ inv__fostack | default("") , "no_failover" )
       }}
-  - action: create_group
-    group: "{{ failover_group }}"
-  - action: add_child
-    group: by_failover_stack
-    child: "{{ failover_group }}"
-  - action: add_host
-    group: "{{ failover_group }}"
+    parent: by_failover_stack
+    add_host: true
 
   # Network group
-  - action: set_var
-    name: network_group
-    value: "net_{{ inv__network }}"
   - action: create_group
-    group: "{{ network_group }}"
-  - action: add_child
-    group: by_network
-    child: "{{ network_group }}"
-  - action: add_host
-    group: "{{ network_group }}"
+    group: "net_{{ inv__network }}"
+    parent: by_network
+    add_host: true
 
   # Service group
   - action: set_var
@@ -107,9 +88,7 @@ instructions:
     value: "svc_{{ inv__service }}"
   - action: create_group
     group: "{{ service_group }}"
-  - action: add_child
-    group: by_service
-    child: "{{ service_group }}"
+    parent: by_service
 
   # Component group. We add the host directly if there is no subcomponent.
   - when: inv__component is defined
@@ -119,22 +98,13 @@ instructions:
     block:
     - action: create_group
       group: "{{ comp_group }}"
-    - action: add_child
-      group: "{{ service_group }}"
-      child: "{{ comp_group }}"
+      parent: "{{ service_group }}"
     # Subcomponent group, or lack thereof.
     - when: inv__subcomponent is not defined
       action: add_host
       group: "{{ comp_group }}"
     - when: inv__subcomponent is defined
-      action: block
-      locals:
-        subcomp_group: "svcm_{{ inv__service }}_{{ inv__subcomponent }}"
-      block:
-      - action: create_group
-        group: "{{ subcomp_group }}"
-      - action: add_child
-        group: "{{ comp_group }}"
-        child: "{{ subcomp_group }}"
-      - action: add_host
-        group: "{{ subcomp_group }}"
+      action: create_group
+      group: "svcm_{{ inv__service }}_{{ inv__subcomponent }}"
+      parent: "{{ comp_group }}"
+      add_host: true

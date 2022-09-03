@@ -49,7 +49,11 @@ DOCUMENTATION = """
           or C(always) will go out of scope once the block finishes executing.
         - C(create_group) creates a group. The name of the group must be
           provided using the C(group) field, which must be a valid name or a
-          Jinja template that evaluates to a valid name.
+          Jinja template that evaluates to a valid name. In addition, a
+          C(parent) field containting the name of a single, existing parent
+          group (or a Jinja template generating the name) may be provided.
+          Finally, the C(add_host) field may be set to a truthy value if the
+          current host must be added to the new group.
         - C(add_child) adds a child group to another group. The name of the
           group being added must be provided in the C(child) entry, while
           the name of the parent must be provided in the C(group) entry. Both
@@ -232,18 +236,42 @@ class RcInstruction:
 
 class RciCreateGroup(RcInstruction):
     def __init__(self, inventory, templar):
-        super().__init__(inventory, templar, "create_group", ("group",))
-        self._may_be_template = None
-        self._group = None
+        super().__init__(
+            inventory, templar, "create_group", ("group", "parent", "add_host")
+        )
+        self._group_mbt = None
+        self._group_name = None
+        self._parent_mbt = None
+        self._parent_name = None
+        self._add_host = None
 
     def parse_action(self, record):
-        assert self._may_be_template is None and self._group is None
-        self._may_be_template, self._group = self.parse_group_name(record, "group")
+        assert self._group_mbt is None and self._group_name is None
+        assert self._parent_mbt is None and self._parent_name is None
+        assert self._add_host is None
+        self._add_host = record.get("add_host", False)
+        self._group_mbt, self._group_name = self.parse_group_name(record, "group")
+        if "parent" in record:
+            self._parent_mbt, self._parent_name = self.parse_group_name(
+                record, "parent"
+            )
 
     def execute_action(self, host_name, merged_vars, host_vars, script_vars):
-        assert not (self._may_be_template is None or self._group is None)
-        name = self.get_templated_group(merged_vars, self._may_be_template, self._group)
+        assert not (
+            self._group_mbt is None
+            or self._group_name is None
+            or self._add_host is None
+        )
+        if self._parent_name is not None:
+            parent = self.get_templated_group(
+                merged_vars, self._parent_mbt, self._parent_name, must_exist=True
+            )
+        name = self.get_templated_group(merged_vars, self._group_mbt, self._group_name)
         self._inventory.add_group(name)
+        if self._parent_name is not None:
+            self._inventory.add_child(parent, name)
+        if self._add_host:
+            self._inventory.add_child(name, host_name)
         return True
 
 

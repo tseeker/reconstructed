@@ -16,7 +16,11 @@ The following actions are supported:
 
   * `create_group` creates a group. The name of the group must be
     provided using the `group` field, which must be a valid name or a
-    Jinja template that evaluates to a valid name.
+    Jinja template that evaluates to a valid name. In addition, a
+    `parent` field containting the name of a single, existing parent
+    group (or a Jinja template generating the name) may be provided.
+    Finally, the `add_host` field may be set to a truthy value if the
+    current host must be added to the new group.
 
   * `add_child` adds a child group to another group. The name of the
     group being added must be provided in the `child` entry, while

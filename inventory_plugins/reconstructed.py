@@ -93,15 +93,53 @@ class RcInstruction:
     COMMON_FIELDS = ("when", "loop", "loop_var", "action")
     DEFAULT_LOOP_VAR = "item"
 
-    def __init__(self, inventory, templar, action, allowed_fields=()):
+    def __init__(self, inventory, templar, display, action, allowed_fields=()):
         self._inventory = inventory
         self._templar = templar
+        self._display = display
         self._condition = None
         self._loop = None
         self._loop_var = None
         self._action = action
         self._allowed_fields = set(allowed_fields)
         self._allowed_fields.update(RcInstruction.COMMON_FIELDS)
+
+    def __repr__(self):
+        flow = []
+        if self._condition is not None:
+            flow.append(
+                "when=%s"
+                % (
+                    repr(
+                        self._condition,
+                    )
+                )
+            )
+        if self._loop is not None:
+            flow.append(
+                "loop=%s, loop_var=%s" % (repr(self._loop), repr(self._loop_var))
+            )
+        if flow:
+            output = "{%s}" % (", ".join(flow),)
+        else:
+            output = ""
+        output += self.repr_instruction_only()
+        return output
+
+    def repr_instruction_only(self):
+        return "%s()" % (self._action,)
+
+    def dump(self):
+        output = []
+        if self._condition is not None:
+            output.append("when: %s" % (repr(self._condition),))
+        if self._loop is not None:
+            output.append("loop[%s]: %s" % (self._loop_var, repr(self._loop)))
+        output.extend(self.dump_instruction())
+        return output
+
+    def dump_instruction(self):
+        return [self.repr_instruction_only()]
 
     def parse(self, record):
         assert "action" in record and record["action"] == self._action
@@ -169,10 +207,15 @@ class RcInstruction:
         merged_vars = host_vars.copy()
         merged_vars.update(script_vars)
         if self._loop is None:
+            self._display.vvvv("%s : running action %s" % (host_name, self._action))
             return self.run_once(host_name, merged_vars, host_vars, script_vars)
         loop_values = self.evaluate_loop(host_name, merged_vars)
         script_vars = script_vars.copy()
         for value in loop_values:
+            self._display.vvvv(
+                "%s : running action %s for item %s"
+                % (host_name, self._action, repr(value))
+            )
             merged_vars[self._loop_var] = value
             script_vars[self._loop_var] = value
             if not self.run_once(host_name, merged_vars, host_vars, script_vars):
@@ -181,9 +224,15 @@ class RcInstruction:
 
     def run_once(self, host_name, merged_vars, host_vars, script_vars):
         if self.evaluate_condition(host_name, merged_vars):
-            return self.execute_action(host_name, merged_vars, host_vars, script_vars)
+            rv = self.execute_action(host_name, merged_vars, host_vars, script_vars)
+            if not rv:
+                self._display.vvvvv(
+                    "%s : action %s returned False, stopping"
+                    % (host_name, self._action)
+                )
         else:
-            return True
+            rv = True
+        return rv
 
     def evaluate_condition(self, host_name, variables):
         if self._condition is None:
@@ -195,12 +244,21 @@ class RcInstruction:
             self._condition,
             t.environment.variable_end_string,
         )
-        return boolean(t.template(template, disable_lookups=False))
+        rv = boolean(t.template(template, disable_lookups=False))
+        self._display.vvvvv(
+            "host %s, action %s, condition %s evaluating to %s"
+            % (host_name, self._action, repr(self._condition), repr(rv))
+        )
+        return rv
 
     def evaluate_loop(self, host_name, variables):
         if isinstance(self._loop, list):
             return self._loop
         assert isinstance(self._loop, string_types)
+        self._display.vvvvv(
+            "host %s, action %s, evaluating loop template %s"
+            % (host_name, self._action, repr(self._loop))
+        )
         self._templar.available_variables = variables
         value = self._templar.template(self._loop, disable_lookups=False)
         if not isinstance(value, list):
@@ -235,15 +293,22 @@ class RcInstruction:
 
 
 class RciCreateGroup(RcInstruction):
-    def __init__(self, inventory, templar):
+    def __init__(self, inventory, templar, display):
         super().__init__(
-            inventory, templar, "create_group", ("group", "parent", "add_host")
+            inventory, templar, display, "create_group", ("group", "parent", "add_host")
         )
         self._group_mbt = None
         self._group_name = None
         self._parent_mbt = None
         self._parent_name = None
         self._add_host = None
+
+    def repr_instruction_only(self):
+        output = "%s(group=%s" % (self._action, repr(self._group_name))
+        if self._parent_name is not None:
+            output += ",parent=" + repr(self._parent_name)
+        output += ",add_host=" + repr(self._add_host) + ")"
+        return output
 
     def parse_action(self, record):
         assert self._group_mbt is None and self._group_name is None
@@ -268,18 +333,24 @@ class RciCreateGroup(RcInstruction):
             )
         name = self.get_templated_group(merged_vars, self._group_mbt, self._group_name)
         self._inventory.add_group(name)
+        self._display.vvv("- created group %s" % (name,))
         if self._parent_name is not None:
             self._inventory.add_child(parent, name)
+            self._display.vvv("- added group %s to %s" % (name, parent))
         if self._add_host:
             self._inventory.add_child(name, host_name)
+            self._display.vvv("- added host %s to %s" % (host_name, name))
         return True
 
 
 class RciAddHost(RcInstruction):
-    def __init__(self, inventory, templar):
-        super().__init__(inventory, templar, "add_host", ("group",))
+    def __init__(self, inventory, templar, display):
+        super().__init__(inventory, templar, display, "add_host", ("group",))
         self._may_be_template = None
         self._group = None
+
+    def repr_instruction_only(self):
+        return "%s(group=%s)" % (self._action, repr(self._group))
 
     def parse_action(self, record):
         assert self._may_be_template is None and self._group is None
@@ -291,16 +362,24 @@ class RciAddHost(RcInstruction):
             merged_vars, self._may_be_template, self._group, must_exist=True
         )
         self._inventory.add_child(name, host_name)
+        self._display.vvv("- added host %s to %s" % (host_name, name))
         return True
 
 
 class RciAddChild(RcInstruction):
-    def __init__(self, inventory, templar):
-        super().__init__(inventory, templar, "add_child", ("group", "child"))
+    def __init__(self, inventory, templar, display):
+        super().__init__(inventory, templar, display, "add_child", ("group", "child"))
         self._group_mbt = None
         self._group_name = None
         self._child_mbt = None
         self._child_name = None
+
+    def repr_instruction_only(self):
+        return "%s(group=%s, child=%s)" % (
+            self._action,
+            repr(self._group_name),
+            repr(self._child_name),
+        )
 
     def parse_action(self, record):
         assert self._group_mbt is None and self._group_name is None
@@ -318,17 +397,25 @@ class RciAddChild(RcInstruction):
             merged_vars, self._child_mbt, self._child_name, must_exist=True
         )
         self._inventory.add_child(group, child)
+        self._display.vvv("- added group %s to %s" % (child, group))
         return True
 
 
 class RciSetVarOrFact(RcInstruction):
-    def __init__(self, inventory, templar, is_fact):
+    def __init__(self, inventory, templar, display, is_fact):
         action = "set_" + ("fact" if is_fact else "var")
-        super().__init__(inventory, templar, action, ("name", "value"))
+        super().__init__(inventory, templar, display, action, ("name", "value"))
         self._is_fact = is_fact
         self._var_name = None
         self._name_may_be_template = None
         self._var_value = None
+
+    def repr_instruction_only(self):
+        return "%s(name=%s, value=%s)" % (
+            self._action,
+            repr(self._var_name),
+            repr(self._var_value),
+        )
 
     def parse_action(self, record):
         assert (
@@ -379,24 +466,35 @@ class RciSetVarOrFact(RcInstruction):
             host_vars[name] = value
         else:
             script_vars[name] = value
+        self._display.vvv(
+            "- set %s %s to %s"
+            % ("fact" if self._is_fact else "var", name, repr(value))
+        )
         return True
 
 
 class RciStop(RcInstruction):
-    def __init__(self, inventory, templar):
-        super().__init__(inventory, templar, "stop")
+    def __init__(self, inventory, templar, display):
+        super().__init__(inventory, templar, display, "stop")
 
     def parse_action(self, record):
         pass
 
     def execute_action(self, host_name, merged_vars, host_vars, script_vars):
+        self._display.vvv("- stopped execution")
         return False
 
 
 class RciFail(RcInstruction):
-    def __init__(self, inventory, templar):
-        super().__init__(inventory, templar, "fail", ("msg",))
+    def __init__(self, inventory, templar, display):
+        super().__init__(inventory, templar, display, "fail", ("msg",))
         self._message = None
+
+    def repr_instruction_only(self):
+        if self._message is None:
+            return "%s()" % (self._action,)
+        else:
+            return "%s(%s)" % (self._action, self._message)
 
     def parse_action(self, record):
         self._message = record.get("msg", None)
@@ -407,18 +505,52 @@ class RciFail(RcInstruction):
         else:
             self._templar.available_variables = merged_vars
             message = self._templar.template(self._message)
+        self._display.vvv("- failed with message %s" % (message,))
         raise AnsibleRuntimeError(message)
 
 
 class RciBlock(RcInstruction):
-    def __init__(self, inventory, templar):
+    def __init__(self, inventory, templar, display):
         super().__init__(
-            inventory, templar, "block", ("block", "rescue", "always", "locals")
+            inventory,
+            templar,
+            display,
+            "block",
+            ("block", "rescue", "always", "locals"),
         )
         self._block = None
         self._rescue = None
         self._always = None
         self._locals = None
+
+    def repr_instruction_only(self):
+        return "%s(block=%s, rescue=%s, always=%s, locals=%s)" % (
+            self._action,
+            repr(self._block),
+            repr(self._rescue),
+            repr(self._always),
+            repr(self._locals),
+        )
+
+    def dump_instruction(self):
+        output = ["%s(...):" % (self._action,)]
+        self.dump_block(output, "block", self._block)
+        self.dump_block(output, "rescue", self._rescue)
+        self.dump_block(output, "always", self._always)
+        if self._locals:
+            output.append("  locals:")
+            for k, v in self._locals.items():
+                output.append("    " + repr(k) + "=" + repr(v))
+        return output
+
+    def dump_block(self, output, block_name, block_contents):
+        if not block_contents:
+            return
+        output.append("  " + block_name + ":")
+        for pos, instr in enumerate(block_contents):
+            if pos != 0:
+                output.append("")
+            output.extend("    " + s for s in instr.dump())
 
     def parse_action(self, record):
         assert (
@@ -465,7 +597,7 @@ class RciBlock(RcInstruction):
         instructions = []
         for record in record[key]:
             instructions.append(
-                parse_instruction(self._inventory, self._templar, record)
+                parse_instruction(self._inventory, self._templar, self._display, record)
             )
         return instructions
 
@@ -483,18 +615,25 @@ class RciBlock(RcInstruction):
             result = self._templar.template(value)
             script_vars[key] = result
             merged_vars[key] = result
+            self._display.vvv("- set block-local %s to %s" % (key, result))
         try:
             try:
+                self._display.vvv("- running 'block' instructions")
                 return self.run_block(
                     self._block, host_name, merged_vars, host_vars, script_vars
                 )
             except AnsibleError as e:
+                if not self._rescue:
+                    self._display.vvv("- block failed")
+                    raise
+                self._display.vvv("- block failed, running 'rescue' instructions")
                 script_vars["reconstructed_error"] = str(e)
                 merged_vars["reconstructed_error"] = str(e)
                 return self.run_block(
                     self._rescue, host_name, merged_vars, host_vars, script_vars
                 )
         finally:
+            self._display.vvv("- block exited, running 'always' instructions")
             self.run_block(self._always, host_name, merged_vars, host_vars, script_vars)
 
     def run_block(self, block, host_name, merged_vars, host_vars, script_vars):
@@ -510,17 +649,17 @@ INSTRUCTIONS = {
     "block": RciBlock,
     "create_group": RciCreateGroup,
     "fail": RciFail,
-    "set_fact": lambda i, t: RciSetVarOrFact(i, t, True),
-    "set_var": lambda i, t: RciSetVarOrFact(i, t, False),
+    "set_fact": lambda i, t, d: RciSetVarOrFact(i, t, d, True),
+    "set_var": lambda i, t, d: RciSetVarOrFact(i, t, d, False),
     "stop": RciStop,
 }
 
 
-def parse_instruction(inventory, templar, record):
+def parse_instruction(inventory, templar, display, record):
     action = record["action"]
     if action not in INSTRUCTIONS:
         raise AnsibleParserError("Unknown action '%s'" % (action,))
-    instruction = INSTRUCTIONS[action](inventory, templar)
+    instruction = INSTRUCTIONS[action](inventory, templar, display)
     instruction.parse(record)
     return instruction
 
@@ -539,8 +678,12 @@ class InventoryModule(BaseInventoryPlugin):
         instr_src = self.get_option("instructions")
         instructions = []
         for record in instr_src:
-            instructions.append(parse_instruction(self.inventory, self.templar, record))
+            instructions.append(
+                parse_instruction(self.inventory, self.templar, self.display, record)
+            )
+        self.dump_program(instructions)
         for host in inventory.hosts:
+            self.display.vvv("executing reconstructed script for %s" % (host,))
             try:
                 self.exec_for_host(host, instructions)
             except AnsibleError as e:
@@ -556,3 +699,15 @@ class InventoryModule(BaseInventoryPlugin):
         for instruction in instructions:
             if not instruction.run_for(host, host_vars, script_vars):
                 return
+
+    def dump_program(self, instructions):
+        if self.display.verbosity < 4:
+            if self.display.verbosity == 3:
+                self.display.vvv("parsed program: " + repr(instructions))
+            return
+        output = []
+        for pos, instr in enumerate(instructions):
+            if pos:
+                output.append("")
+            output.extend(instr.dump())
+        self.display.vvvv("parsed program:\n\n" + "\n".join("  " + s for s in output))

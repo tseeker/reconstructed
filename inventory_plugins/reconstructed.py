@@ -86,14 +86,31 @@ DOCUMENTATION = """
         default: host
 """
 
+INSTR_COMMON_FIELDS = ("when", "loop", "loop_var", "action")
+"""Fields that may be present on all instructions."""
+
+INSTR_OWN_FIELDS = {
+    "create_group": ("group", "parent", "add_host"),
+    "add_host": ("group",),
+    "add_child": ("group", "child"),
+    "set_var": ("name", "value"),
+    "set_fact": ("name", "value"),
+    "stop": (),
+    "fail": ("msg",),
+    "block": ("block", "rescue", "always", "locals"),
+}
+"""Fields that are specific to each instruction."""
+
+INSTR_FIELDS = {k: set(v + INSTR_COMMON_FIELDS) for k, v in INSTR_OWN_FIELDS.items()}
+"""All supported fields for each instruction, including common and specific fields."""
+
 
 class RcInstruction:
     """An instruction that can be executed by the plugin."""
 
-    COMMON_FIELDS = ("when", "loop", "loop_var", "action")
     DEFAULT_LOOP_VAR = "item"
 
-    def __init__(self, inventory, templar, display, action, allowed_fields=()):
+    def __init__(self, inventory, templar, display, action):
         self._inventory = inventory
         self._templar = templar
         self._display = display
@@ -101,8 +118,6 @@ class RcInstruction:
         self._loop = None
         self._loop_var = None
         self._action = action
-        self._allowed_fields = set(allowed_fields)
-        self._allowed_fields.update(RcInstruction.COMMON_FIELDS)
 
     def __repr__(self):
         flow = []
@@ -144,7 +159,7 @@ class RcInstruction:
     def parse(self, record):
         assert "action" in record and record["action"] == self._action
         # Ensure there are no unsupported fields
-        extra_fields = set(record.keys()).difference(self._allowed_fields)
+        extra_fields = set(record.keys()).difference(INSTR_FIELDS[self._action])
         if extra_fields:
             raise AnsibleParserError(
                 "%s: unsupported fields: %s" % (self._action, ", ".join(extra_fields))
@@ -294,9 +309,7 @@ class RcInstruction:
 
 class RciCreateGroup(RcInstruction):
     def __init__(self, inventory, templar, display):
-        super().__init__(
-            inventory, templar, display, "create_group", ("group", "parent", "add_host")
-        )
+        super().__init__(inventory, templar, display, "create_group")
         self._group_mbt = None
         self._group_name = None
         self._parent_mbt = None
@@ -345,7 +358,7 @@ class RciCreateGroup(RcInstruction):
 
 class RciAddHost(RcInstruction):
     def __init__(self, inventory, templar, display):
-        super().__init__(inventory, templar, display, "add_host", ("group",))
+        super().__init__(inventory, templar, display, "add_host")
         self._may_be_template = None
         self._group = None
 
@@ -368,7 +381,7 @@ class RciAddHost(RcInstruction):
 
 class RciAddChild(RcInstruction):
     def __init__(self, inventory, templar, display):
-        super().__init__(inventory, templar, display, "add_child", ("group", "child"))
+        super().__init__(inventory, templar, display, "add_child")
         self._group_mbt = None
         self._group_name = None
         self._child_mbt = None
@@ -404,7 +417,7 @@ class RciAddChild(RcInstruction):
 class RciSetVarOrFact(RcInstruction):
     def __init__(self, inventory, templar, display, is_fact):
         action = "set_" + ("fact" if is_fact else "var")
-        super().__init__(inventory, templar, display, action, ("name", "value"))
+        super().__init__(inventory, templar, display, action)
         self._is_fact = is_fact
         self._var_name = None
         self._name_may_be_template = None
@@ -487,7 +500,7 @@ class RciStop(RcInstruction):
 
 class RciFail(RcInstruction):
     def __init__(self, inventory, templar, display):
-        super().__init__(inventory, templar, display, "fail", ("msg",))
+        super().__init__(inventory, templar, display, "fail")
         self._message = None
 
     def repr_instruction_only(self):
@@ -511,13 +524,7 @@ class RciFail(RcInstruction):
 
 class RciBlock(RcInstruction):
     def __init__(self, inventory, templar, display):
-        super().__init__(
-            inventory,
-            templar,
-            display,
-            "block",
-            ("block", "rescue", "always", "locals"),
-        )
+        super().__init__(inventory, templar, display, "block")
         self._block = None
         self._rescue = None
         self._always = None

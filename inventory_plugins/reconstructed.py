@@ -220,18 +220,28 @@ class RcInstruction(abc.ABC):
         if self._loop is None:
             self._display.vvvv("%s : running action %s" % (host_name, self._action))
             return self.run_once(host_name, merged_vars, host_vars, script_vars)
-        loop_values = self.evaluate_loop(host_name, merged_vars)
-        script_vars = script_vars.copy()
-        for value in loop_values:
-            self._display.vvvv(
-                "%s : running action %s for item %s"
-                % (host_name, self._action, repr(value))
-            )
-            merged_vars[self._loop_var] = value
-            script_vars[self._loop_var] = value
-            if not self.run_once(host_name, merged_vars, host_vars, script_vars):
-                return False
-        return True
+        # Save previous loop variable state
+        had_loop_var = self._loop_var in script_vars
+        if had_loop_var:
+            old_loop_var = script_vars[self._loop_var]
+        try:
+            # Loop over all values
+            for value in self.evaluate_loop(host_name, merged_vars):
+                self._display.vvvv(
+                    "%s : running action %s for item %s"
+                    % (host_name, self._action, repr(value))
+                )
+                merged_vars[self._loop_var] = value
+                script_vars[self._loop_var] = value
+                if not self.run_once(host_name, merged_vars, host_vars, script_vars):
+                    return False
+            return True
+        finally:
+            # Restore loop variable state
+            if had_loop_var:
+                script_vars[self._loop_var] = old_loop_var
+            else:
+                del script_vars[self._loop_var]
 
     def run_once(self, host_name, merged_vars, host_vars, script_vars):
         if self.evaluate_condition(host_name, merged_vars):

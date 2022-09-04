@@ -622,33 +622,37 @@ class RciBlock(RcInstruction):
             or self._always is None
             or self._locals is None
         )
-        merged_vars = merged_vars.copy()
-        script_vars = script_vars.copy()
-        self._templar.available_variables = merged_vars
+        mv_copy = merged_vars.copy()
+        sv_copy = script_vars.copy()
+        self._templar.available_variables = mv_copy
         for key, value in self._locals.items():
             result = self._templar.template(value)
-            script_vars[key] = result
-            merged_vars[key] = result
+            sv_copy[key] = result
+            mv_copy[key] = result
             self._display.vvv("- set block-local %s to %s" % (key, result))
         try:
             try:
                 self._display.vvv("- running 'block' instructions")
                 return self.run_block(
-                    self._block, host_name, merged_vars, host_vars, script_vars
+                    self._block, host_name, mv_copy, host_vars, sv_copy
                 )
             except AnsibleError as e:
                 if not self._rescue:
                     self._display.vvv("- block failed")
                     raise
                 self._display.vvv("- block failed, running 'rescue' instructions")
-                script_vars["reconstructed_error"] = str(e)
-                merged_vars["reconstructed_error"] = str(e)
+                sv_copy["reconstructed_error"] = str(e)
+                mv_copy["reconstructed_error"] = str(e)
                 return self.run_block(
-                    self._rescue, host_name, merged_vars, host_vars, script_vars
+                    self._rescue, host_name, mv_copy, host_vars, sv_copy
                 )
         finally:
             self._display.vvv("- block exited, running 'always' instructions")
-            self.run_block(self._always, host_name, merged_vars, host_vars, script_vars)
+            self.run_block(self._always, host_name, mv_copy, host_vars, sv_copy)
+            # Reset merged vars, as the host vars may have changed.
+            merged_vars.clear()
+            merged_vars.update(host_vars)
+            merged_vars.update(script_vars)
 
     def run_block(self, block, host_name, merged_vars, host_vars, script_vars):
         for instruction in block:

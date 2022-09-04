@@ -1,3 +1,5 @@
+import abc
+
 from ansible import constants as C
 from ansible.errors import AnsibleParserError, AnsibleRuntimeError, AnsibleError
 from ansible.module_utils.six import string_types
@@ -105,7 +107,7 @@ INSTR_FIELDS = {k: set(v + INSTR_COMMON_FIELDS) for k, v in INSTR_OWN_FIELDS.ite
 """All supported fields for each instruction, including common and specific fields."""
 
 
-class RcInstruction:
+class RcInstruction(abc.ABC):
     """An instruction that can be executed by the plugin."""
 
     DEFAULT_LOOP_VAR = "item"
@@ -208,6 +210,7 @@ class RcInstruction:
                 )
         return may_be_template, group
 
+    @abc.abstractmethod
     def parse_action(self, record):
         raise NotImplementedError
 
@@ -275,9 +278,6 @@ class RcInstruction:
             )
         return value
 
-    def execute_action(self, host_name, merged_vars, host_vars, script_vars):
-        raise NotImplementedError
-
     def get_templated_group(self, variables, may_be_template, name, must_exist=False):
         if may_be_template:
             self._templar.available_variables = variables
@@ -298,6 +298,10 @@ class RcInstruction:
                 "%s: group '%s' does not exist" % (self._action, real_name)
             )
         return real_name
+
+    @abc.abstractmethod
+    def execute_action(self, host_name, merged_vars, host_vars, script_vars):
+        raise NotImplementedError
 
 
 class RciCreateGroup(RcInstruction):

@@ -111,6 +111,7 @@ class RcInstruction(abc.ABC):
     """An instruction that can be executed by the plugin."""
 
     DEFAULT_LOOP_VAR = "item"
+    """The name of the default loop variable."""
 
     def __init__(self, inventory, templar, display, action):
         self._inventory = inventory
@@ -122,6 +123,8 @@ class RcInstruction(abc.ABC):
         self._action = action
 
     def __repr__(self):
+        """Builds a compact debugging representation of the instruction, \
+                including any conditional or iteration clause."""
         flow = []
         if self._condition is not None:
             flow.append("when=%s" % (repr(self._condition),))
@@ -137,9 +140,20 @@ class RcInstruction(abc.ABC):
         return output
 
     def repr_instruction_only(self):
+        """Builds a compact debugging representation of the instruction itself."""
         return "%s()" % (self._action,)
 
     def dump(self):
+        """Builds a representation of the instruction over multiple lines.
+
+        This method generates a representation of the instruction, including
+        any conditional or iteration clause, over multiple lines. It is meant
+        to be used when generating a dump of the parsed program for high
+        verbosity values.
+
+        Returns:
+            a list of strings (one for each line)
+        """
         output = []
         if self._condition is not None:
             output.append("{when: %s}" % (repr(self._condition),))
@@ -149,9 +163,27 @@ class RcInstruction(abc.ABC):
         return output
 
     def dump_instruction(self):
+        """Builds the multi-line debugging representation of the instruction.
+
+        This method returns a list of strings that correspond to the output
+        lines that represent the instruction.
+
+        Returns:
+            a list of strings (one for each line)
+        """
         return [self.repr_instruction_only()]
 
     def parse(self, record):
+        """Parse the instruction's record.
+
+        This method ensures that no unsupported fields are present in the
+        instruction's record. It then extracts the conditional clause and the
+        iteration clause, if they are present. Finally it calls ``parse_action``
+        in order to extract the instruction itself.
+
+        Args:
+            record: the dictionnary that contains the instruction
+        """
         assert "action" in record and record["action"] == self._action
         # Ensure there are no unsupported fields
         extra_fields = set(record.keys()).difference(INSTR_FIELDS[self._action])
@@ -193,6 +225,21 @@ class RcInstruction(abc.ABC):
         self.parse_action(record)
 
     def parse_group_name(self, record, name):
+        """Parse a field containing the name of a group, or a template.
+
+        This helper method may be used by implementations to extract either a
+        group name or a template from a field. If the string cannot possibly be
+        a Jinja template, it will be stripped of extra spaces then checked for
+        invalid characters.
+
+        Args:
+            record: the dictionnary that contains the instruction
+            name: the name of the field to read
+
+        Returns:
+            a tuple consisting of a boolean that indicates whether the string
+            may be a template or not, and the string itself.
+        """
         if name not in record:
             raise AnsibleParserError("%s: missing '%s' field" % (self._action, name))
         group = record[name]
@@ -212,9 +259,35 @@ class RcInstruction(abc.ABC):
 
     @abc.abstractmethod
     def parse_action(self, record):
+        """Parse the instruction-specific fields.
+
+        This method must be overridden to read all necessary data from the input
+        record and configure the instruction.
+
+        Args:
+            record: the dictionnary that contains the instruction
+        """
         raise NotImplementedError
 
     def run_for(self, host_name, merged_vars, host_vars, script_vars):
+        """Execute the instruction for a given host.
+
+        This method is the entry point for instruction execution. Depending on
+        whether an iteration clause is present or not, it will either call
+        ``run_once()`` directly or evaluate the loop data then run it once for
+        each item, after setting the loop variable.
+
+        Args:
+            host_name: the name of the host to execute the instruction for
+            merged_vars: the variable cache, with local script variables \
+                taking precedence over host facts.
+            host_vars: the host's facts, as a mapping
+            script_vars: the current script variables, as a mapping
+
+        Returns:
+            ``True`` if execution must continue, ``False`` if it must be
+            interrupted
+        """
         if self._loop is None:
             self._display.vvvv("%s : running action %s" % (host_name, self._action))
             return self.run_once(host_name, merged_vars, host_vars, script_vars)
@@ -247,6 +320,19 @@ class RcInstruction(abc.ABC):
                     del merged_vars[self._loop_var]
 
     def run_once(self, host_name, merged_vars, host_vars, script_vars):
+        """Check the condition if it exists, then run the instruction.
+
+        Args:
+            host_name: the name of the host to execute the instruction for
+            merged_vars: the variable cache, with local script variables \
+                taking precedence over host facts.
+            host_vars: the host's facts, as a mapping
+            script_vars: the current script variables, as a mapping
+
+        Returns:
+            ``True`` if execution must continue, ``False`` if it must be
+            interrupted
+        """
         if self.evaluate_condition(host_name, merged_vars):
             rv = self.execute_action(host_name, merged_vars, host_vars, script_vars)
             if not rv:
@@ -259,6 +345,17 @@ class RcInstruction(abc.ABC):
         return rv
 
     def evaluate_condition(self, host_name, variables):
+        """Evaluate the condition for an instruction's execution.
+
+        Args:
+            host_name: the name of the host to execute the instruction for
+            variables: the variables cache
+
+        Returns:
+            ``True`` if there is no conditional clause for this instruction, or
+            if there is one and it evaluated to a truthy value; ``False``
+            otherwise.
+        """
         if self._condition is None:
             return True
         t = self._templar
@@ -276,6 +373,15 @@ class RcInstruction(abc.ABC):
         return rv
 
     def evaluate_loop(self, host_name, variables):
+        """Evaluate the values to iterate over when a ``loop`` is defined.
+
+        Args:
+            host_name: the name of the host to execute the instruction for
+            variables: the variables cache
+
+        Returns:
+            the list of items to iterate over
+        """
         self._display.vvvvv(
             "host %s, action %s, evaluating loop template %s"
             % (host_name, self._action, repr(self._loop))
@@ -289,6 +395,20 @@ class RcInstruction(abc.ABC):
         return value
 
     def get_templated_group(self, variables, may_be_template, name, must_exist=False):
+        """Extract a group name from its source, optionally ensure it exists, \
+            then return it.
+
+        Args:
+            variables: the variables cache
+            may_be_template: a flag that indicates whether the name should be \
+                processed with the templar.
+            name: the name or its template
+            must_exist: a flag that, if ``True``, will cause an exception to \
+                be raised if the group does not exist.
+
+        Returns:
+            the name of the group
+        """
         if may_be_template:
             self._templar.available_variables = variables
             real_name = self._templar.template(name)
@@ -311,6 +431,22 @@ class RcInstruction(abc.ABC):
 
     @abc.abstractmethod
     def execute_action(self, host_name, merged_vars, host_vars, script_vars):
+        """Execute the instruction.
+
+        This method must be overridden to implement the actual action of the
+        instruction.
+
+        Args:
+            host_name: the name of the host to execute the instruction for
+            merged_vars: the variable cache, with local script variables \
+                taking precedence over host facts.
+            host_vars: the host's facts, as a mapping
+            script_vars: the current script variables, as a mapping
+
+        Return:
+            ``True`` if the script's execution should continue, ``False`` if
+            it should be interrupted.
+        """
         raise NotImplementedError
 
 

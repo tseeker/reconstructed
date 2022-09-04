@@ -122,14 +122,7 @@ class RcInstruction:
     def __repr__(self):
         flow = []
         if self._condition is not None:
-            flow.append(
-                "when=%s"
-                % (
-                    repr(
-                        self._condition,
-                    )
-                )
-            )
+            flow.append("when=%s" % (repr(self._condition),))
         if self._loop is not None:
             flow.append(
                 "loop=%s, loop_var=%s" % (repr(self._loop), repr(self._loop_var))

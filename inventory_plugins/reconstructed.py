@@ -214,9 +214,7 @@ class RcInstruction(abc.ABC):
     def parse_action(self, record):
         raise NotImplementedError
 
-    def run_for(self, host_name, host_vars, script_vars):
-        merged_vars = host_vars.copy()
-        merged_vars.update(script_vars)
+    def run_for(self, host_name, merged_vars, host_vars, script_vars):
         if self._loop is None:
             self._display.vvvv("%s : running action %s" % (host_name, self._action))
             return self.run_once(host_name, merged_vars, host_vars, script_vars)
@@ -654,7 +652,7 @@ class RciBlock(RcInstruction):
 
     def run_block(self, block, host_name, merged_vars, host_vars, script_vars):
         for instruction in block:
-            if not instruction.run_for(host_name, host_vars, script_vars):
+            if not instruction.run_for(host_name, merged_vars, host_vars, script_vars):
                 return False
         return True
 
@@ -711,9 +709,10 @@ class InventoryModule(BaseInventoryPlugin):
 
     def exec_for_host(self, host, instructions):
         host_vars = self.inventory.get_host(host).get_vars()
+        var_cache = host_vars.copy()
         script_vars = {}
         for instruction in instructions:
-            if not instruction.run_for(host, host_vars, script_vars):
+            if not instruction.run_for(host, var_cache, host_vars, script_vars):
                 return
 
     def dump_program(self, instructions):

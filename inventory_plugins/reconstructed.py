@@ -480,12 +480,14 @@ class RciSetVarOrFact(RcInstruction):
         else:
             name = self._var_name
         value = self._templar.template(self._var_value)
-        merged_vars[name] = value
         if self._is_fact:
             self._inventory.set_variable(host_name, name, value)
             host_vars[name] = value
+            if name not in script_vars:
+                merged_vars[name] = value
         else:
             script_vars[name] = value
+            merged_vars[name] = value
         self._display.vvv(
             "- set %s %s to %s"
             % ("fact" if self._is_fact else "var", name, repr(value))

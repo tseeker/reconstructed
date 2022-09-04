@@ -26,8 +26,7 @@ instructions:
         msg: "{{ reconstructed_error }}"
       - action: create_group
         group: reedmably_evil
-      - action: add_host
-        group: reedmably_evil
+        add_host: true
       - action: stop
 
   # Only create the managed groups if we *have* managed hosts

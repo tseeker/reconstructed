@@ -147,9 +147,9 @@ class RcInstruction:
     def dump(self):
         output = []
         if self._condition is not None:
-            output.append("when: %s" % (repr(self._condition),))
+            output.append("{when: %s}" % (repr(self._condition),))
         if self._loop is not None:
-            output.append("loop[%s]: %s" % (self._loop_var, repr(self._loop)))
+            output.append("{loop[%s]: %s}" % (self._loop_var, repr(self._loop)))
         output.extend(self.dump_instruction())
         return output
 

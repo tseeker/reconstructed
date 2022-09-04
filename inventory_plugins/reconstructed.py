@@ -238,8 +238,13 @@ class RcInstruction(abc.ABC):
             # Restore loop variable state
             if had_loop_var:
                 script_vars[self._loop_var] = old_loop_var
+                merged_vars[self._loop_var] = old_loop_var
             else:
                 del script_vars[self._loop_var]
+                if self._loop_var in host_vars:
+                    merged_vars[self._loop_var] = host_vars[self._loop_var]
+                else:
+                    del merged_vars[self._loop_var]
 
     def run_once(self, host_name, merged_vars, host_vars, script_vars):
         if self.evaluate_condition(host_name, merged_vars):

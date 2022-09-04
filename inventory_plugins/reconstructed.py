@@ -276,9 +276,6 @@ class RcInstruction(abc.ABC):
         return rv
 
     def evaluate_loop(self, host_name, variables):
-        if isinstance(self._loop, list):
-            return self._loop
-        assert isinstance(self._loop, string_types)
         self._display.vvvvv(
             "host %s, action %s, evaluating loop template %s"
             % (host_name, self._action, repr(self._loop))

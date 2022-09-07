@@ -1,4 +1,5 @@
 import abc
+from collections import MutableMapping
 
 from ansible import constants as C
 from ansible.errors import AnsibleParserError, AnsibleRuntimeError, AnsibleError
@@ -105,6 +106,55 @@ INSTR_OWN_FIELDS = {
 
 INSTR_FIELDS = {k: set(v + INSTR_COMMON_FIELDS) for k, v in INSTR_OWN_FIELDS.items()}
 """All supported fields for each instruction, including common and specific fields."""
+
+
+class VariableStorage(MutableMapping):
+    def __init__(self, host_vars):
+        self._host_vars = host_vars
+        self._script_stack = [{}]
+        self._cache = host_vars.copy()
+
+    def _script_stack_push(self):
+        self._script_stack.append(self._script_stack[-1].copy())
+
+    def _script_stack_pop(self):
+        self._script_stack.pop()
+        self._cache = self._host_vars.copy()
+        self._cache.update(self._script_stack[-1])
+
+    def _set_host_var(self, name, value):
+        self._host_vars[name] = value
+        if name not in self._script_stack[-1]:
+            self._cache[name] = value
+
+    def __getitem__(self, k):
+        return self._cache[k]
+
+    def __setitem__(self, k, v):
+        self._script_stack[-1][k] = v
+        self._cache[k] = v
+
+    def __delitem__(self, k):
+        del self._script_stack[-1][k]
+        if k in self._host_vars:
+            self._cache[k] = self._host_vars[k]
+        else:
+            del self._cache[k]
+
+    def __iter__(self):
+        return self._cache.__iter__()
+
+    def __len__(self):
+        return len(self._cache)
+
+    def keys(self):
+        return self._cache.keys()
+
+    def items(self):
+        return self._cache.items()
+
+    def values(self):
+        return self._cache.values()
 
 
 class RcInstruction(abc.ABC):
@@ -269,7 +319,7 @@ class RcInstruction(abc.ABC):
         """
         raise NotImplementedError
 
-    def run_for(self, host_name, merged_vars, host_vars, script_vars):
+    def run_for(self, host_name, variables):
         """Execute the instruction for a given host.
 
         This method is the entry point for instruction execution. Depending on
@@ -279,10 +329,7 @@ class RcInstruction(abc.ABC):
 
         Args:
             host_name: the name of the host to execute the instruction for
-            merged_vars: the variable cache, with local script variables \
-                taking precedence over host facts.
-            host_vars: the host's facts, as a mapping
-            script_vars: the current script variables, as a mapping
+            variables: the variable storage instance
 
         Returns:
             ``True`` if execution must continue, ``False`` if it must be
@@ -290,51 +337,42 @@ class RcInstruction(abc.ABC):
         """
         if self._loop is None:
             self._display.vvvv("%s : running action %s" % (host_name, self._action))
-            return self.run_once(host_name, merged_vars, host_vars, script_vars)
+            return self.run_once(host_name, variables)
         # Save previous loop variable state
-        had_loop_var = self._loop_var in script_vars
+        had_loop_var = self._loop_var in variables
         if had_loop_var:
-            old_loop_var = script_vars[self._loop_var]
+            old_loop_var = variables[self._loop_var]
         try:
             # Loop over all values
-            for value in self.evaluate_loop(host_name, merged_vars):
+            for value in self.evaluate_loop(host_name, variables):
                 self._display.vvvv(
                     "%s : running action %s for item %s"
                     % (host_name, self._action, repr(value))
                 )
-                merged_vars[self._loop_var] = value
-                script_vars[self._loop_var] = value
-                if not self.run_once(host_name, merged_vars, host_vars, script_vars):
+                variables[self._loop_var] = value
+                if not self.run_once(host_name, variables):
                     return False
             return True
         finally:
             # Restore loop variable state
             if had_loop_var:
-                script_vars[self._loop_var] = old_loop_var
-                merged_vars[self._loop_var] = old_loop_var
+                variables[self._loop_var] = old_loop_var
             else:
-                del script_vars[self._loop_var]
-                if self._loop_var in host_vars:
-                    merged_vars[self._loop_var] = host_vars[self._loop_var]
-                else:
-                    del merged_vars[self._loop_var]
+                del variables[self._loop_var]
 
-    def run_once(self, host_name, merged_vars, host_vars, script_vars):
+    def run_once(self, host_name, variables):
         """Check the condition if it exists, then run the instruction.
 
         Args:
             host_name: the name of the host to execute the instruction for
-            merged_vars: the variable cache, with local script variables \
-                taking precedence over host facts.
-            host_vars: the host's facts, as a mapping
-            script_vars: the current script variables, as a mapping
+            variables: the variable storage instance
 
         Returns:
             ``True`` if execution must continue, ``False`` if it must be
             interrupted
         """
-        if self.evaluate_condition(host_name, merged_vars):
-            rv = self.execute_action(host_name, merged_vars, host_vars, script_vars)
+        if self.evaluate_condition(host_name, variables):
+            rv = self.execute_action(host_name, variables)
             if not rv:
                 self._display.vvvvv(
                     "%s : action %s returned False, stopping"
@@ -349,7 +387,7 @@ class RcInstruction(abc.ABC):
 
         Args:
             host_name: the name of the host to execute the instruction for
-            variables: the variables cache
+            variables: the variable storage instance
 
         Returns:
             ``True`` if there is no conditional clause for this instruction, or
@@ -377,7 +415,7 @@ class RcInstruction(abc.ABC):
 
         Args:
             host_name: the name of the host to execute the instruction for
-            variables: the variables cache
+            variables: the variable storage instance
 
         Returns:
             the list of items to iterate over
@@ -399,7 +437,7 @@ class RcInstruction(abc.ABC):
             then return it.
 
         Args:
-            variables: the variables cache
+            variables: the variable storage instance
             may_be_template: a flag that indicates whether the name should be \
                 processed with the templar.
             name: the name or its template
@@ -430,7 +468,7 @@ class RcInstruction(abc.ABC):
         return real_name
 
     @abc.abstractmethod
-    def execute_action(self, host_name, merged_vars, host_vars, script_vars):
+    def execute_action(self, host_name, variables):
         """Execute the instruction.
 
         This method must be overridden to implement the actual action of the
@@ -477,7 +515,7 @@ class RciCreateGroup(RcInstruction):
                 record, "parent"
             )
 
-    def execute_action(self, host_name, merged_vars, host_vars, script_vars):
+    def execute_action(self, host_name, variables):
         assert not (
             self._group_mbt is None
             or self._group_name is None
@@ -485,9 +523,9 @@ class RciCreateGroup(RcInstruction):
         )
         if self._parent_name is not None:
             parent = self.get_templated_group(
-                merged_vars, self._parent_mbt, self._parent_name, must_exist=True
+                variables, self._parent_mbt, self._parent_name, must_exist=True
             )
-        name = self.get_templated_group(merged_vars, self._group_mbt, self._group_name)
+        name = self.get_templated_group(variables, self._group_mbt, self._group_name)
         self._inventory.add_group(name)
         self._display.vvv("- created group %s" % (name,))
         if self._parent_name is not None:
@@ -512,10 +550,10 @@ class RciAddHost(RcInstruction):
         assert self._may_be_template is None and self._group is None
         self._may_be_template, self._group = self.parse_group_name(record, "group")
 
-    def execute_action(self, host_name, merged_vars, host_vars, script_vars):
+    def execute_action(self, host_name, variables):
         assert not (self._may_be_template is None or self._group is None)
         name = self.get_templated_group(
-            merged_vars, self._may_be_template, self._group, must_exist=True
+            variables, self._may_be_template, self._group, must_exist=True
         )
         self._inventory.add_child(name, host_name)
         self._display.vvv("- added host %s to %s" % (host_name, name))
@@ -543,14 +581,14 @@ class RciAddChild(RcInstruction):
         self._group_mbt, self._group_name = self.parse_group_name(record, "group")
         self._child_mbt, self._child_name = self.parse_group_name(record, "child")
 
-    def execute_action(self, host_name, merged_vars, host_vars, script_vars):
+    def execute_action(self, host_name, variables):
         assert not (self._group_mbt is None or self._group_name is None)
         assert not (self._child_mbt is None or self._child_name is None)
         group = self.get_templated_group(
-            merged_vars, self._group_mbt, self._group_name, must_exist=True
+            variables, self._group_mbt, self._group_name, must_exist=True
         )
         child = self.get_templated_group(
-            merged_vars, self._child_mbt, self._child_name, must_exist=True
+            variables, self._child_mbt, self._child_name, must_exist=True
         )
         self._inventory.add_child(group, child)
         self._display.vvv("- added group %s to %s" % (child, group))
@@ -595,13 +633,13 @@ class RciSetVarOrFact(RcInstruction):
         self._var_name = name
         self._var_value = record["value"]
 
-    def execute_action(self, host_name, merged_vars, host_vars, script_vars):
+    def execute_action(self, host_name, variables):
         assert not (
             self._var_name is None
             or self._name_may_be_template is None
             or self._var_value is None
         )
-        self._templar.available_variables = merged_vars
+        self._templar.available_variables = variables
         if self._name_may_be_template:
             name = self._templar.template(self._var_name)
             if not isinstance(name, string_types):
@@ -618,12 +656,9 @@ class RciSetVarOrFact(RcInstruction):
         value = self._templar.template(self._var_value)
         if self._is_fact:
             self._inventory.set_variable(host_name, name, value)
-            host_vars[name] = value
-            if name not in script_vars:
-                merged_vars[name] = value
+            variables._set_host_var(name, value)
         else:
-            script_vars[name] = value
-            merged_vars[name] = value
+            variables[name] = value
         self._display.vvv(
             "- set %s %s to %s"
             % ("fact" if self._is_fact else "var", name, repr(value))
@@ -638,7 +673,7 @@ class RciStop(RcInstruction):
     def parse_action(self, record):
         pass
 
-    def execute_action(self, host_name, merged_vars, host_vars, script_vars):
+    def execute_action(self, host_name, variables):
         self._display.vvv("- stopped execution")
         return False
 
@@ -657,11 +692,11 @@ class RciFail(RcInstruction):
     def parse_action(self, record):
         self._message = record.get("msg", None)
 
-    def execute_action(self, host_name, merged_vars, host_vars, script_vars):
+    def execute_action(self, host_name, variables):
         if self._message is None:
             message = "fail requested (%s)" % (host_name,)
         else:
-            self._templar.available_variables = merged_vars
+            self._templar.available_variables = variables
             message = self._templar.template(self._message)
         self._display.vvv("- failed with message %s" % (message,))
         raise AnsibleRuntimeError(message)
@@ -753,48 +788,38 @@ class RciBlock(RcInstruction):
             )
         return instructions
 
-    def execute_action(self, host_name, merged_vars, host_vars, script_vars):
+    def execute_action(self, host_name, variables):
         assert not (
             self._block is None
             or self._rescue is None
             or self._always is None
             or self._locals is None
         )
-        mv_copy = merged_vars.copy()
-        sv_copy = script_vars.copy()
-        self._templar.available_variables = mv_copy
+        variables._script_stack_push()
+        self._templar.available_variables = variables
         for key, value in self._locals.items():
             result = self._templar.template(value)
-            sv_copy[key] = result
-            mv_copy[key] = result
+            variables[key] = result
             self._display.vvv("- set block-local %s to %s" % (key, result))
         try:
             try:
                 self._display.vvv("- running 'block' instructions")
-                return self.run_block(
-                    self._block, host_name, mv_copy, host_vars, sv_copy
-                )
+                return self.run_block(self._block, host_name, variables)
             except AnsibleError as e:
                 if not self._rescue:
                     self._display.vvv("- block failed")
                     raise
                 self._display.vvv("- block failed, running 'rescue' instructions")
-                sv_copy["reconstructed_error"] = str(e)
-                mv_copy["reconstructed_error"] = str(e)
-                return self.run_block(
-                    self._rescue, host_name, mv_copy, host_vars, sv_copy
-                )
+                variables["reconstructed_error"] = str(e)
+                return self.run_block(self._rescue, host_name, variables)
         finally:
             self._display.vvv("- block exited, running 'always' instructions")
-            self.run_block(self._always, host_name, mv_copy, host_vars, sv_copy)
-            # Reset merged vars, as the host vars may have changed.
-            merged_vars.clear()
-            merged_vars.update(host_vars)
-            merged_vars.update(script_vars)
+            self.run_block(self._always, host_name, variables)
+            variables._script_stack_pop()
 
-    def run_block(self, block, host_name, merged_vars, host_vars, script_vars):
+    def run_block(self, block, host_name, variables):
         for instruction in block:
-            if not instruction.run_for(host_name, merged_vars, host_vars, script_vars):
+            if not instruction.run_for(host_name, variables):
                 return False
         return True
 
@@ -851,10 +876,9 @@ class InventoryModule(BaseInventoryPlugin):
 
     def exec_for_host(self, host, instructions):
         host_vars = self.inventory.get_host(host).get_vars()
-        var_cache = host_vars.copy()
-        script_vars = {}
+        variables = VariableStorage(host_vars)
         for instruction in instructions:
-            if not instruction.run_for(host, var_cache, host_vars, script_vars):
+            if not instruction.run_for(host, variables):
                 return
 
     def dump_program(self, instructions):

@@ -111,13 +111,35 @@ INSTR_FIELDS = {k: set(v + INSTR_COMMON_FIELDS) for k, v in INSTR_OWN_FIELDS.ite
 
 
 class VariableStorage(MutableMapping):
+    """Variable storage and cache.
+
+    This class implements storage for local variables, with the ability to save
+    some of them and then restore them. It also implements a cache that combines
+    both local variables and host facts.
+    """
+
     def __init__(self, host_vars):
+        """Initialize the cache using the specified mapping of host variables.
+
+        Args:
+            host_vars: the host variables
+        """
         self._host_vars = host_vars
         self._script_vars = {}
         self._script_stack = []
         self._cache = host_vars.copy()
 
     def _script_stack_push(self, variables):
+        """Push the state of some local variables to the stack.
+
+        This method will add a record containing the state of some variables to
+        the stack so it may be restored later. The state for a single variable
+        consists in a flag indicating whether the variable existed or not, and
+        its value if it did.
+
+        Args:
+            variables: an iterable of variable names whose state must be pushed
+        """
         data = {}
         for v in variables:
             if v in self._script_vars:
@@ -128,6 +150,13 @@ class VariableStorage(MutableMapping):
         self._script_stack.append(data)
 
     def _script_stack_pop(self):
+        """Restore the state of local variables from the stack.
+
+        This method will restore state entries that were saved by
+        :py:meth:`_script_stack_push`. Local variables that didn't exist then
+        will be deleted, while variables which actually existed will be
+        restored. The cache will be reset.
+        """
         restore = self._script_stack.pop()
         if not restore:
             return
@@ -141,6 +170,19 @@ class VariableStorage(MutableMapping):
         self._cache.update(self._script_vars)
 
     def _set_host_var(self, name, value):
+        """Set a host variable.
+
+        This method sets the value of a host variable in the appropriate
+        mapping, and updates the cache as will unless a local variable with the
+        same name exists.
+
+        Note: the actual inventory is not modified, only the local copy of
+        host variables is.
+
+        Args:
+            name: the name of the variable
+            value: the value of the variable
+        """
         self._host_vars[name] = value
         if name not in self._script_vars:
             self._cache[name] = value

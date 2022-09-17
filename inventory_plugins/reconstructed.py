@@ -119,7 +119,7 @@ class VariableStorage(MutableMapping):
         data = {}
         for v in variables:
             if v in self._script_vars:
-                se = (True, self._script_vars[v])
+                se = (True, self._script_vars[v].copy())
             else:
                 se = (False, None)
             data[v] = se

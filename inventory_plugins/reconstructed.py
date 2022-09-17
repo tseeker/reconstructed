@@ -40,6 +40,8 @@ DOCUMENTATION = """
         - The C(when) field, if present, must contain a Jinja expression
           representing a condition which will be checked before the instruction
           is executed.
+        - The C(run_once) field will ensure that the instuction it is attached
+          to will only run one time at most.
         - The C(action) field must be set to one of the following values.
         - The C(block) action is another form of flow control, which can be
           used to repeat multiple instructions or make them obey a single
@@ -91,7 +93,7 @@ DOCUMENTATION = """
         default: host
 """
 
-INSTR_COMMON_FIELDS = ("when", "loop", "loop_var", "action")
+INSTR_COMMON_FIELDS = ("when", "loop", "loop_var", "action", "run_once")
 """Fields that may be present on all instructions."""
 
 INSTR_OWN_FIELDS = {
@@ -231,6 +233,7 @@ class RcInstruction(abc.ABC):
         self._loop = None
         self._loop_var = None
         self._action = action
+        self._executed_once = None
 
     def __repr__(self):
         """Builds a compact debugging representation of the instruction, \
@@ -242,6 +245,8 @@ class RcInstruction(abc.ABC):
             flow.append(
                 "loop=%s, loop_var=%s" % (repr(self._loop), repr(self._loop_var))
             )
+        if self._executed_once is not None:
+            flow.append("run_once")
         if flow:
             output = "{%s}" % (", ".join(flow),)
         else:
@@ -269,6 +274,8 @@ class RcInstruction(abc.ABC):
             output.append("{when: %s}" % (repr(self._condition),))
         if self._loop is not None:
             output.append("{loop[%s]: %s}" % (self._loop_var, repr(self._loop)))
+        if self._executed_once is not None:
+            output.append("{run_once}")
         output.extend(self.dump_instruction())
         return output
 
@@ -331,6 +338,9 @@ class RcInstruction(abc.ABC):
             raise AnsibleParserError(
                 "%s: 'loop_var' clause found without 'loop'" % (self._action,)
             )
+        # Handle instructions that may only be executed once
+        if record.get("run_once", False):
+            self._executed_once = False
         # Process action-specific fields
         self.parse_action(record)
 
@@ -395,6 +405,10 @@ class RcInstruction(abc.ABC):
             ``True`` if execution must continue, ``False`` if it must be
             interrupted
         """
+        if self._executed_once is True:
+            return True
+        if self._executed_once is False:
+            self._executed_once = True
         if self._loop is None:
             self._display.vvvv("%s : running action %s" % (host_name, self._action))
             return self.run_iteration(host_name, variables)

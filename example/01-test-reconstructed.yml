@@ -30,12 +30,15 @@ instructions:
       - action: stop
 
   # Only create the managed groups if we *have* managed hosts
-  - action: create_group
-    group: managed
-  - loop: [by_environment, by_network, by_failover_stack, by_service]
-    action: create_group
-    group: "{{ item }}"
-    parent: managed
+  - action: block
+    run_once: true
+    block:
+      - action: create_group
+        group: managed
+      - loop: [by_environment, by_network, by_failover_stack, by_service]
+        action: create_group
+        group: "{{ item }}"
+        parent: managed
 
   # Copy inv__data fields to separate inv__ variables
   - loop:

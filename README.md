@@ -8,9 +8,9 @@ I just don't forget about this whole thing.
 
 A `reconstructed` inventory executes a list of instructions that is read
 from the `instructions` YAML field. Each instruction is a table with some
-minimal control flow (`when` and `loop` keywords that work mostly like their
-playbook cousins), an `action` field that contains the name of the instruction
-to execute, and whatever fields are needed for the instruction.
+minimal control flow (`when`, `loop` and `run_once` keywords that work mostly
+like their playbook cousins), an `action` field that contains the name of the
+instruction to execute, and whatever fields are needed for the instruction.
 
 The following actions are supported:
 

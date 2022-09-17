@@ -129,6 +129,8 @@ class VariableStorage(MutableMapping):
 
     def _script_stack_pop(self):
         restore = self._script_stack.pop()
+        if not restore:
+            return
         for vn, vv in restore.items():
             existed, value = vv
             if existed:

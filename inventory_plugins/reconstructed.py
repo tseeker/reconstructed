@@ -111,31 +111,45 @@ INSTR_FIELDS = {k: set(v + INSTR_COMMON_FIELDS) for k, v in INSTR_OWN_FIELDS.ite
 class VariableStorage(MutableMapping):
     def __init__(self, host_vars):
         self._host_vars = host_vars
-        self._script_stack = [{}]
+        self._script_vars = {}
+        self._script_stack = []
         self._cache = host_vars.copy()
 
-    def _script_stack_push(self):
-        self._script_stack.append(self._script_stack[-1].copy())
+    def _script_stack_push(self, variables):
+        data = {}
+        for v in variables:
+            if v in self._script_vars:
+                se = (True, self._script_vars[v])
+            else:
+                se = (False, None)
+            data[v] = se
+        self._script_stack.append(data)
 
     def _script_stack_pop(self):
-        self._script_stack.pop()
+        restore = self._script_stack.pop()
+        for vn, vv in restore.items():
+            existed, value = vv
+            if existed:
+                self._script_vars[vn] = value
+            elif vn in self._script_vars:
+                del self._script_vars[vn]
         self._cache = self._host_vars.copy()
-        self._cache.update(self._script_stack[-1])
+        self._cache.update(self._script_vars)
 
     def _set_host_var(self, name, value):
         self._host_vars[name] = value
-        if name not in self._script_stack[-1]:
+        if name not in self._script_vars:
             self._cache[name] = value
 
     def __getitem__(self, k):
         return self._cache[k]
 
     def __setitem__(self, k, v):
-        self._script_stack[-1][k] = v
+        self._script_vars[k] = v
         self._cache[k] = v
 
     def __delitem__(self, k):
-        del self._script_stack[-1][k]
+        del self._script_vars[k]
         if k in self._host_vars:
             self._cache[k] = self._host_vars[k]
         else:
@@ -339,9 +353,7 @@ class RcInstruction(abc.ABC):
             self._display.vvvv("%s : running action %s" % (host_name, self._action))
             return self.run_once(host_name, variables)
         # Save previous loop variable state
-        had_loop_var = self._loop_var in variables
-        if had_loop_var:
-            old_loop_var = variables[self._loop_var]
+        variables._script_stack_push([self._loop_var])
         try:
             # Loop over all values
             for value in self.evaluate_loop(host_name, variables):
@@ -355,10 +367,7 @@ class RcInstruction(abc.ABC):
             return True
         finally:
             # Restore loop variable state
-            if had_loop_var:
-                variables[self._loop_var] = old_loop_var
-            else:
-                del variables[self._loop_var]
+            variables._script_stack_pop()
 
     def run_once(self, host_name, variables):
         """Check the condition if it exists, then run the instruction.
@@ -795,26 +804,28 @@ class RciBlock(RcInstruction):
             or self._always is None
             or self._locals is None
         )
-        variables._script_stack_push()
-        self._templar.available_variables = variables
-        for key, value in self._locals.items():
-            result = self._templar.template(value)
-            variables[key] = result
-            self._display.vvv("- set block-local %s to %s" % (key, result))
+        variables._script_stack_push(self._locals.keys())
         try:
+            self._templar.available_variables = variables
+            for key, value in self._locals.items():
+                result = self._templar.template(value)
+                variables[key] = result
+                self._display.vvv("- set block-local %s to %s" % (key, result))
             try:
-                self._display.vvv("- running 'block' instructions")
-                return self.run_block(self._block, host_name, variables)
-            except AnsibleError as e:
-                if not self._rescue:
-                    self._display.vvv("- block failed")
-                    raise
-                self._display.vvv("- block failed, running 'rescue' instructions")
-                variables["reconstructed_error"] = str(e)
-                return self.run_block(self._rescue, host_name, variables)
+                try:
+                    self._display.vvv("- running 'block' instructions")
+                    return self.run_block(self._block, host_name, variables)
+                except AnsibleError as e:
+                    if not self._rescue:
+                        self._display.vvv("- block failed")
+                        raise
+                    self._display.vvv("- block failed, running 'rescue' instructions")
+                    variables["reconstructed_error"] = str(e)
+                    return self.run_block(self._rescue, host_name, variables)
+            finally:
+                self._display.vvv("- block exited, running 'always' instructions")
+                self.run_block(self._always, host_name, variables)
         finally:
-            self._display.vvv("- block exited, running 'always' instructions")
-            self.run_block(self._always, host_name, variables)
             variables._script_stack_pop()
 
     def run_block(self, block, host_name, variables):

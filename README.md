@@ -52,9 +52,8 @@ containing the list of instructions which are part of the block. It may have
 a `rescue` field, containing a list of instructions which will be executed on
 error, and `always`, which may contain a list of instructions to execute in
 all cases. If the `locals` field is defined, it must contain a table of local
-variables to define. Any local variable defined by the instructions under
-`block`, `rescue` or `always` will go out of scope once the block finishes
-executing.
+variables to define. If these variables already exist, their state will be
+saved and they will be restored after the block is done executing.
 
 A somewhat silly example can be found in the `example` directory. Trying to
 execute it using `ansible-inventory --graph` results in the following output.

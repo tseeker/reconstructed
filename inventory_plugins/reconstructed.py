@@ -35,7 +35,8 @@ DOCUMENTATION = """
           template that will return a list). The instruction will be repeated
           for each value in the list. The C(loop_var) field may be added to
           specify the name of the variable into which the current value will
-          be written; by default the C(item) variable will be used.
+          be written; by default the C(item) variable will be used. Once the
+          loop execution ends, the loop variable's previous state is restored.
         - The C(when) field, if present, must contain a Jinja expression
           representing a condition which will be checked before the instruction
           is executed.
@@ -49,7 +50,8 @@ DOCUMENTATION = """
           of instructions to execute in all cases. If the C(locals) field is
           defined, it must contain a table of local variables to define. Any
           local variable defined by the instructions under C(block), C(rescue)
-          or C(always) will go out of scope once the block finishes executing.
+          or C(always) will go out of scope once the block finishes executing,
+          and the previous values, if any, will be restored.
         - C(create_group) creates a group. The name of the group must be
           provided using the C(group) field, which must be a valid name or a
           Jinja template that evaluates to a valid name. In addition, a

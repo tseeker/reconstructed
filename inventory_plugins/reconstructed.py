@@ -384,8 +384,8 @@ class RcInstruction(abc.ABC):
 
         This method is the entry point for instruction execution. Depending on
         whether an iteration clause is present or not, it will either call
-        ``run_once()`` directly or evaluate the loop data then run it once for
-        each item, after setting the loop variable.
+        :py:meth:`run_iteration` directly or evaluate the loop data then run it
+        once for each item, after setting the loop variable.
 
         Args:
             host_name: the name of the host to execute the instruction for
@@ -397,7 +397,7 @@ class RcInstruction(abc.ABC):
         """
         if self._loop is None:
             self._display.vvvv("%s : running action %s" % (host_name, self._action))
-            return self.run_once(host_name, variables)
+            return self.run_iteration(host_name, variables)
         # Save previous loop variable state
         variables._script_stack_push([self._loop_var])
         try:
@@ -408,14 +408,14 @@ class RcInstruction(abc.ABC):
                     % (host_name, self._action, repr(value))
                 )
                 variables[self._loop_var] = value
-                if not self.run_once(host_name, variables):
+                if not self.run_iteration(host_name, variables):
                     return False
             return True
         finally:
             # Restore loop variable state
             variables._script_stack_pop()
 
-    def run_once(self, host_name, variables):
+    def run_iteration(self, host_name, variables):
         """Check the condition if it exists, then run the instruction.
 
         Args:

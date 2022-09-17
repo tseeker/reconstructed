@@ -544,6 +544,8 @@ class RcInstruction(abc.ABC):
 
 
 class RciCreateGroup(RcInstruction):
+    """``create_group`` instruction implementation."""
+
     def __init__(self, inventory, templar, display):
         super().__init__(inventory, templar, display, "create_group")
         self._group_mbt = None
@@ -593,6 +595,8 @@ class RciCreateGroup(RcInstruction):
 
 
 class RciAddHost(RcInstruction):
+    """``add_host`` instruction implementation."""
+
     def __init__(self, inventory, templar, display):
         super().__init__(inventory, templar, display, "add_host")
         self._may_be_template = None
@@ -616,6 +620,8 @@ class RciAddHost(RcInstruction):
 
 
 class RciAddChild(RcInstruction):
+    """``add_child`` instruction implementation."""
+
     def __init__(self, inventory, templar, display):
         super().__init__(inventory, templar, display, "add_child")
         self._group_mbt = None
@@ -651,6 +657,8 @@ class RciAddChild(RcInstruction):
 
 
 class RciSetVarOrFact(RcInstruction):
+    """Implementation of the ``set_fact`` and ``set_var`` instructions."""
+
     def __init__(self, inventory, templar, display, is_fact):
         action = "set_" + ("fact" if is_fact else "var")
         super().__init__(inventory, templar, display, action)
@@ -722,6 +730,8 @@ class RciSetVarOrFact(RcInstruction):
 
 
 class RciStop(RcInstruction):
+    """``stop`` instruction implementation."""
+
     def __init__(self, inventory, templar, display):
         super().__init__(inventory, templar, display, "stop")
 
@@ -734,6 +744,8 @@ class RciStop(RcInstruction):
 
 
 class RciFail(RcInstruction):
+    """``fail`` instruction implementation."""
+
     def __init__(self, inventory, templar, display):
         super().__init__(inventory, templar, display, "fail")
         self._message = None
@@ -758,6 +770,8 @@ class RciFail(RcInstruction):
 
 
 class RciBlock(RcInstruction):
+    """``block`` instruction implementation."""
+
     def __init__(self, inventory, templar, display):
         super().__init__(inventory, templar, display, "block")
         self._block = None
@@ -776,20 +790,30 @@ class RciBlock(RcInstruction):
 
     def dump_instruction(self):
         output = ["%s(...):" % (self._action,)]
-        self.dump_block(output, "block", self._block)
-        self.dump_block(output, "rescue", self._rescue)
-        self.dump_block(output, "always", self._always)
+        self.dump_section(output, "block", self._block)
+        self.dump_section(output, "rescue", self._rescue)
+        self.dump_section(output, "always", self._always)
         if self._locals:
             output.append("  locals:")
             for k, v in self._locals.items():
                 output.append("    " + repr(k) + "=" + repr(v))
         return output
 
-    def dump_block(self, output, block_name, block_contents):
-        if not block_contents:
+    def dump_section(self, output, section_name, section_contents):
+        """Dump one of the sections.
+
+        This method is used to create the dump that corresponds to one of the
+        ``block``, ``rescue`` or ``always`` lists of instructions.
+
+        Args:
+            output: a list of strings to append to
+            block_name: the name of the section being dumped
+            block_contents: the list of instructions in this section
+        """
+        if not section_contents:
             return
-        output.append("  " + block_name + ":")
-        for pos, instr in enumerate(block_contents):
+        output.append("  " + section_name + ":")
+        for pos, instr in enumerate(section_contents):
             if pos != 0:
                 output.append("")
             output.extend("    " + s for s in instr.dump())
@@ -831,6 +855,20 @@ class RciBlock(RcInstruction):
             self._locals = {}
 
     def parse_block(self, record, key):
+        """Parse the contents of one of the instruction lists.
+
+        This method will extract the instructions for one of the ``block``,
+        ``rescue`` and ``always`` sections. The corresponding key must exist
+        in the YAML data when the method is called. It will ensure that it is
+        a list before reading the instructions it contains.
+
+        Args:
+            record: the record of the ``block`` instruction
+            key: the section to read (``block``, ``rescue`` or ``always``)
+
+        Returns:
+            the list of instructions in the section.
+        """
         if not isinstance(record[key], list):
             raise AnsibleParserError(
                 "%s: '%s' field must contain a list of instructions"
@@ -860,22 +898,35 @@ class RciBlock(RcInstruction):
             try:
                 try:
                     self._display.vvv("- running 'block' instructions")
-                    return self.run_block(self._block, host_name, variables)
+                    return self.run_section(self._block, host_name, variables)
                 except AnsibleError as e:
                     if not self._rescue:
                         self._display.vvv("- block failed")
                         raise
                     self._display.vvv("- block failed, running 'rescue' instructions")
                     variables["reconstructed_error"] = str(e)
-                    return self.run_block(self._rescue, host_name, variables)
+                    return self.run_section(self._rescue, host_name, variables)
             finally:
                 self._display.vvv("- block exited, running 'always' instructions")
-                self.run_block(self._always, host_name, variables)
+                self.run_section(self._always, host_name, variables)
         finally:
             variables._script_stack_pop()
 
-    def run_block(self, block, host_name, variables):
-        for instruction in block:
+    def run_section(self, section, host_name, variables):
+        """Execute a single section.
+
+        This method executes the sequence of instructions in a single section.
+
+        Args:
+            section: the list of instructions
+            host_name: the name of the host being processed
+            variables: the variable storage area
+
+        Returns:
+            ``True`` if the script's execution should continue, ``False`` if it
+            should be interrupted
+        """
+        for instruction in section:
             if not instruction.run_for(host_name, variables):
                 return False
         return True
@@ -913,6 +964,7 @@ class InventoryModule(BaseInventoryPlugin):
     def parse(self, inventory, loader, path, cache=True):
         super().parse(inventory, loader, path, cache)
         self._read_config_data(path)
+        # Read the program
         instr_src = self.get_option("instructions")
         instructions = []
         for record in instr_src:
@@ -920,6 +972,7 @@ class InventoryModule(BaseInventoryPlugin):
                 parse_instruction(self.inventory, self.templar, self.display, record)
             )
         self.dump_program(instructions)
+        # Execute it for each host
         for host in inventory.hosts:
             self.display.vvv("executing reconstructed script for %s" % (host,))
             try:
@@ -932,6 +985,15 @@ class InventoryModule(BaseInventoryPlugin):
                 )
 
     def exec_for_host(self, host, instructions):
+        """Execute the program for a single host.
+
+        This method initialises a variable storage instance from the host's
+        variables then runs the instructions.
+
+        Args:
+            host: the name of the host to execute for
+            instructions: the list of instructions to execute
+        """
         host_vars = self.inventory.get_host(host).get_vars()
         variables = VariableStorage(host_vars)
         for instruction in instructions:
@@ -939,6 +1001,15 @@ class InventoryModule(BaseInventoryPlugin):
                 return
 
     def dump_program(self, instructions):
+        """Dump the whole program to the log, depending on verbosity level.
+
+        This method will dump the program to the log. If verbosity is at level
+        3, the dump will be written using `repr`. If it is 4 or higher, it will
+        be dumped in a much more readable, albeit longer,  form.
+
+        Args:
+            instructions: the list of instructions in the program
+        """
         if self.display.verbosity < 4:
             if self.display.verbosity == 3:
                 self.display.vvv("parsed program: " + repr(instructions))

@@ -51,9 +51,14 @@ them obey a single conditional. The instruction must include a `block` field,
 containing the list of instructions which are part of the block. It may have
 a `rescue` field, containing a list of instructions which will be executed on
 error, and `always`, which may contain a list of instructions to execute in
-all cases. If the `locals` field is defined, it must contain a table of local
-variables to define. If these variables already exist, their state will be
-saved and they will be restored after the block is done executing.
+all cases.
+
+If the `vars` field is defined on an instruction, it must contain a table of
+local variables to define. Their values are computed after the loop variable
+is evaluated, but before the condition is. If these variables already existed,
+their state will be saved and they will be restored after the instruction is
+done executing. This is different from the core Ansible behaviour, which does
+not evaluate the `vars` unless they are used.
 
 A somewhat silly example can be found in the `example` directory. Trying to
 execute it using `ansible-inventory --graph` results in the following output.

@@ -95,7 +95,7 @@ instructions:
   # Component group. We add the host directly if there is no subcomponent.
   - when: inv__component is defined
     action: block
-    locals:
+    vars:
       comp_group: "svcm_{{ inv__service }}_{{ inv__component }}"
     block:
     - action: create_group

@@ -1,5 +1,5 @@
 import abc
-from collections import MutableMapping
+from collections.abc import MutableMapping
 
 from ansible import constants as C
 from ansible.errors import AnsibleParserError, AnsibleRuntimeError, AnsibleError

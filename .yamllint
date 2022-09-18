@@ -1,0 +1,47 @@
+rules:
+  braces: &braces_config
+    min-spaces-inside: 1
+    max-spaces-inside: 1
+    min-spaces-inside-empty: 0
+    max-spaces-inside-empty: 1
+  brackets: *braces_config
+  colons:
+    max-spaces-before: 0
+    max-spaces-after: 1
+  commas:
+    max-spaces-before: 1
+    min-spaces-after: 1
+    max-spaces-after: 1
+  comments:
+    require-starting-space: true
+    ignore-shebangs: true
+    min-spaces-from-content: 4
+  comments-indentation: { level: warning }
+  document-end: { present: false }
+  document-start: disable
+  empty-lines:
+    max: 2
+    max-start: 0
+    max-end: 0
+  empty-values:
+    forbid-in-block-mappings: true
+    forbid-in-flow-mappings: true
+  hyphens: { max-spaces-after: 1 }
+  indentation:
+    spaces: 2
+    indent-sequences: true
+  key-duplicates: enable
+  key-ordering: disable
+  line-length:
+    max: 88
+    allow-non-breakable-words: true
+    allow-non-breakable-inline-mappings: true
+  new-line-at-end-of-file: enable
+  new-lines:
+    type: unix
+  octal-values: disable
+  quoted-strings:
+    required: only-when-needed
+    quote-type: single
+  trailing-spaces: enable
+  truthy: { allowed-values: [ 'true' , 'false' ] }

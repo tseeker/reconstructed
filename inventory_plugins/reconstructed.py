@@ -893,11 +893,7 @@ class RciBlock(RcInstruction):
             output.extend("    " + s for s in instr.dump())
 
     def parse_action(self, record):
-        assert (
-            self._block is None
-            and self._rescue is None
-            and self._always is None
-        )
+        assert self._block is None and self._rescue is None and self._always is None
         if "block" not in record:
             raise AnsibleParserError("%s: missing 'block' field" % (self._action,))
         self._block = self.parse_block(record, "block")
@@ -938,11 +934,7 @@ class RciBlock(RcInstruction):
         return instructions
 
     def execute_action(self, host_name, variables):
-        assert not (
-            self._block is None
-            or self._rescue is None
-            or self._always is None
-        )
+        assert not (self._block is None or self._rescue is None or self._always is None)
         try:
             try:
                 self._display.vvv("- running 'block' instructions")

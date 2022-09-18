@@ -1,7 +1,7 @@
 all:
   hosts:
 
-    localhost:
+    localhost: {}
 
     # All of this should obviously come from some other inventory plugin.
 

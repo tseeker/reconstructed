@@ -247,6 +247,8 @@ class RcInstruction(abc.ABC):
             flow.append(
                 "loop=%s, loop_var=%s" % (repr(self._loop), repr(self._loop_var))
             )
+        if len(self._vars) != 0:
+            flow.append("vars=%s" % (repr(self._vars),))
         if self._executed_once is not None:
             flow.append("run_once")
         if flow:
@@ -272,12 +274,14 @@ class RcInstruction(abc.ABC):
             a list of strings (one for each line)
         """
         output = []
-        if self._condition is not None:
-            output.append("{when: %s}" % (repr(self._condition),))
-        if self._loop is not None:
-            output.append("{loop[%s]: %s}" % (self._loop_var, repr(self._loop)))
         if self._executed_once is not None:
             output.append("{run_once}")
+        if self._loop is not None:
+            output.append("{loop[%s]: %s}" % (self._loop_var, repr(self._loop)))
+        for var in self._vars:
+            output.append("{var %s=%s}" % (var, repr(self._vars[var])))
+        if self._condition is not None:
+            output.append("{when: %s}" % (repr(self._condition),))
         output.extend(self.dump_instruction())
         return output
 

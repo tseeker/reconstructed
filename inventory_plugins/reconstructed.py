@@ -97,14 +97,14 @@ INSTR_COMMON_FIELDS = ("when", "loop", "loop_var", "action", "run_once")
 """Fields that may be present on all instructions."""
 
 INSTR_OWN_FIELDS = {
-    "create_group": ("group", "parent", "add_host"),
-    "add_host": ("group",),
     "add_child": ("group", "child"),
-    "set_var": ("name", "value"),
-    "set_fact": ("name", "value"),
-    "stop": (),
-    "fail": ("msg",),
+    "add_host": ("group",),
     "block": ("block", "rescue", "always", "locals"),
+    "create_group": ("group", "parent", "add_host"),
+    "fail": ("msg",),
+    "set_fact": ("name", "value"),
+    "set_var": ("name", "value"),
+    "stop": (),
 }
 """Fields that are specific to each instruction."""
 

@@ -161,16 +161,18 @@ class VariableStorage(MutableMapping):
         restored. The cache will be reset.
         """
         restore = self._script_stack.pop()
-        if not restore:
-            return
+        unchanged = 0
         for vn, vv in restore.items():
             existed, value = vv
             if existed:
                 self._script_vars[vn] = value
             elif vn in self._script_vars:
                 del self._script_vars[vn]
-        self._cache = self._host_vars.copy()
-        self._cache.update(self._script_vars)
+            else:
+                unchanged += 1
+        if unchanged != len(restore):
+            self._cache = self._host_vars.copy()
+            self._cache.update(self._script_vars)
 
     def _set_host_var(self, name, value):
         """Set a host variable.

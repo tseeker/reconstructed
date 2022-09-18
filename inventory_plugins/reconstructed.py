@@ -1,4 +1,5 @@
 import abc
+import copy
 from collections.abc import MutableMapping
 
 from ansible import constants as C
@@ -145,7 +146,7 @@ class VariableStorage(MutableMapping):
         data = {}
         for v in variables:
             if v in self._script_vars:
-                se = (True, self._script_vars[v].copy())
+                se = (True, copy.copy(self._script_vars[v]))
             else:
                 se = (False, None)
             data[v] = se

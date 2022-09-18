@@ -854,15 +854,13 @@ class RciBlock(RcInstruction):
         self._block = None
         self._rescue = None
         self._always = None
-        self._locals = None
 
     def repr_instruction_only(self):
-        return "%s(block=%s, rescue=%s, always=%s, locals=%s)" % (
+        return "%s(block=%s, rescue=%s, always=%s)" % (
             self._action,
             repr(self._block),
             repr(self._rescue),
             repr(self._always),
-            repr(self._locals),
         )
 
     def dump_instruction(self):
@@ -870,10 +868,6 @@ class RciBlock(RcInstruction):
         self.dump_section(output, "block", self._block)
         self.dump_section(output, "rescue", self._rescue)
         self.dump_section(output, "always", self._always)
-        if self._locals:
-            output.append("  locals:")
-            for k, v in self._locals.items():
-                output.append("    " + repr(k) + "=" + repr(v))
         return output
 
     def dump_section(self, output, section_name, section_contents):
@@ -900,7 +894,6 @@ class RciBlock(RcInstruction):
             self._block is None
             and self._rescue is None
             and self._always is None
-            and self._locals is None
         )
         if "block" not in record:
             raise AnsibleParserError("%s: missing 'block' field" % (self._action,))
@@ -913,23 +906,6 @@ class RciBlock(RcInstruction):
             self._always = self.parse_block(record, "always")
         else:
             self._always = []
-        if "locals" in record:
-            if not isinstance(record["locals"], dict):
-                raise AnsibleParserError(
-                    "%s: 'locals' should be a dictionnary" % (self._action,)
-                )
-            for k, v in record["locals"].items():
-                if not isinstance(k, string_types):
-                    raise AnsibleParserError(
-                        "%s: locals identifiers must be strings" % (self._action,)
-                    )
-                if not isidentifier(k):
-                    raise AnsibleParserError(
-                        "%s: '%s' is not a valid identifier" % (self._action, k)
-                    )
-            self._locals = record["locals"]
-        else:
-            self._locals = {}
 
     def parse_block(self, record, key):
         """Parse the contents of one of the instruction lists.
@@ -963,31 +939,21 @@ class RciBlock(RcInstruction):
             self._block is None
             or self._rescue is None
             or self._always is None
-            or self._locals is None
         )
-        variables._script_stack_push(self._locals.keys())
         try:
-            self._templar.available_variables = variables
-            for key, value in self._locals.items():
-                result = self._templar.template(value)
-                variables[key] = result
-                self._display.vvv("- set block-local %s to %s" % (key, result))
             try:
-                try:
-                    self._display.vvv("- running 'block' instructions")
-                    return self.run_section(self._block, host_name, variables)
-                except AnsibleError as e:
-                    if not self._rescue:
-                        self._display.vvv("- block failed")
-                        raise
-                    self._display.vvv("- block failed, running 'rescue' instructions")
-                    variables["reconstructed_error"] = str(e)
-                    return self.run_section(self._rescue, host_name, variables)
-            finally:
-                self._display.vvv("- block exited, running 'always' instructions")
-                self.run_section(self._always, host_name, variables)
+                self._display.vvv("- running 'block' instructions")
+                return self.run_section(self._block, host_name, variables)
+            except AnsibleError as e:
+                if not self._rescue:
+                    self._display.vvv("- block failed")
+                    raise
+                self._display.vvv("- block failed, running 'rescue' instructions")
+                variables["reconstructed_error"] = str(e)
+                return self.run_section(self._rescue, host_name, variables)
         finally:
-            variables._script_stack_pop()
+            self._display.vvv("- block exited, running 'always' instructions")
+            self.run_section(self._always, host_name, variables)
 
     def run_section(self, section, host_name, variables):
         """Execute a single section.

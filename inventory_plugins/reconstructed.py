@@ -317,48 +317,77 @@ class RcInstruction(abc.ABC):
             raise AnsibleParserError(
                 "%s: unsupported fields: %s" % (self._action, ", ".join(extra_fields))
             )
-        # Extract the condition
-        if "when" in record:
-            if not isinstance(record["when"], string_types):
-                raise AnsibleParserError(
-                    "%s: 'when' clause is not a string" % (self._action,)
-                )
-            self._condition = record["when"]
-        # Extract the loop data and configuration
-        if "loop" in record:
-            loop = record["loop"]
-            if not isinstance(loop, string_types + (list,)):
-                raise AnsibleParserError(
-                    "%s: 'loop' clause is neither a string nor a list" % (self._action,)
-                )
-            loop_var = record.get("loop_var", RcInstruction.DEFAULT_LOOP_VAR)
-            if not isinstance(loop_var, string_types):
-                raise AnsibleParserError(
-                    "%s: 'loop_var' clause is not a string" % (self._action,)
-                )
-            if not isidentifier(loop_var):
-                raise AnsibleParserError(
-                    "%s: 'loop_var' value '%s' is not a valid identifier"
-                    % (self._action, loop_var)
-                )
-            self._loop = loop
-            self._loop_var = loop_var
-        elif "loop_var" in record:
-            raise AnsibleParserError(
-                "%s: 'loop_var' clause found without 'loop'" % (self._action,)
-            )
-        # Extract local variables
+        # Extract the loop, condition and local variable clauses
+        self.parse_condition(record)
+        self.parse_loop(record)
         self._vars = self.parse_vars(record)
+        self.parse_run_once(record)
         # Cache the list of variables to save before execution
         save = list(self._vars.keys())
         if self._loop is not None:
             save.append(self._loop_var)
         self._save = tuple(save)
-        # Handle instructions that may only be executed once
-        if record.get("run_once", False):
-            self._executed_once = False
         # Process action-specific fields
         self.parse_action(record)
+
+    def parse_condition(self, record):
+        """Parse the ``when`` clause of an instruction.
+
+        If the ``when`` clause is present, ensure it contains a string then
+        store it.
+
+        Args:
+            record: the YAML data
+
+        Raises:
+            AnsibleParserError: if the ``when`` clause is present but does not \
+                    contain a string
+        """
+        if "when" not in record:
+            return
+        if not isinstance(record["when"], string_types):
+            raise AnsibleParserError(
+                "%s: 'when' clause is not a string" % (self._action,)
+            )
+        self._condition = record["when"]
+
+    def parse_loop(self, record):
+        """Parse the ``loop`` and ``loop_var`` clauses of an instruction.
+
+        Check for proper usage of both the ``loop`` and ``loop_var`` clauses,
+        then extract the values and store them.
+
+        Args:
+            record: the instruction's YAML data
+
+        Raises:
+            AnsibleParserError: when ``loop_var`` is being used without \
+                ``loop``, when the type of either is incorrect, or when the \
+                value of ``loop_var`` is not a valid identifier.
+        """
+        if "loop" not in record:
+            if "loop_var" in record:
+                raise AnsibleParserError(
+                    "%s: 'loop_var' clause found without 'loop'" % (self._action,)
+                )
+            return
+        loop = record["loop"]
+        if not isinstance(loop, string_types + (list,)):
+            raise AnsibleParserError(
+                "%s: 'loop' clause is neither a string nor a list" % (self._action,)
+            )
+        loop_var = record.get("loop_var", RcInstruction.DEFAULT_LOOP_VAR)
+        if not isinstance(loop_var, string_types):
+            raise AnsibleParserError(
+                "%s: 'loop_var' clause is not a string" % (self._action,)
+            )
+        if not isidentifier(loop_var):
+            raise AnsibleParserError(
+                "%s: 'loop_var' value '%s' is not a valid identifier"
+                % (self._action, loop_var)
+            )
+        self._loop = loop
+        self._loop_var = loop_var
 
     def parse_vars(self, record):
         """Parse local variable definitions from the record.
@@ -392,6 +421,25 @@ class RcInstruction(abc.ABC):
                     "%s: '%s' is not a valid identifier" % (self._action, k)
                 )
         return record["vars"]
+
+    def parse_run_once(self, record):
+        """Parse an instruction's ``run_once`` clause.
+
+        Args:
+            record: the YAML data for the instruction
+
+        Raises:
+            AnsibleParserError: when the clause is present but does not \
+                contain a truthy value
+        """
+        if "run_once" not in record:
+            return
+        if not isinstance(record["run_once"], bool):
+            raise AnsibleParserError(
+                "%s: run_once must be a truthy value" % (self._action,)
+            )
+        if record["run_once"]:
+            self._executed_once = False
 
     def parse_group_name(self, record, name):
         """Parse a field containing the name of a group, or a template.

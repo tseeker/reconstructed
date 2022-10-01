@@ -400,3 +400,29 @@ class TestParseVars:
         assert len(isid_calls) == len(record["vars"])
         for key in record["vars"].keys():
             assert mock.call(key) in isid_calls
+
+
+class TestParseRunOnce:
+    """Tests for the ``parse_run_once()`` method."""
+
+    def test_no_runonce(self, instr):
+        """No effect unless ``run_once`` is defined."""
+        instr.parse_run_once({})
+        assert instr._executed_once is None
+
+    @pytest.mark.parametrize("bad_value", (1, "lol", [1], (1,), {"1": "2"}))
+    def test_runonce_invalid(self, instr, bad_value):
+        """Parse error if ``run_once`` is defined with an invalid type."""
+        with pytest.raises(AnsibleParserError):
+            instr.parse_run_once({"run_once": bad_value})
+        assert instr._executed_once is None
+
+    def test_runonce_false(self, instr):
+        """No effect if ``run_once`` is defined but set to ``False``."""
+        instr.parse_run_once({"run_once": False})
+        assert instr._executed_once is None
+
+    def test_runonce_true(self, instr):
+        """Feature enabled if ``run_once`` is defined and set to ``True``."""
+        instr.parse_run_once({"run_once": True})
+        assert instr._executed_once is False

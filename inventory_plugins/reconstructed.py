@@ -237,7 +237,7 @@ class RcInstruction(abc.ABC):
         self._executed_once = None
         self._loop = None
         self._loop_var = None
-        self._vars = None
+        self._vars = {}
         self._save = None
 
     def __repr__(self):

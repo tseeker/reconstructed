@@ -31,6 +31,12 @@ def instr():
     )
 
 
+@pytest.fixture(autouse=True)
+def mock_isidentifier():
+    reconstructed.isidentifier = mock.MagicMock()
+    reconstructed.isidentifier.return_value = True
+
+
 # ------------------------------------------------------------------------------
 
 
@@ -281,3 +287,65 @@ class TestParseCondition:
         cond = "test"
         instr.parse_condition({"when": cond})
         assert instr._condition == cond
+
+
+class TestParseLoop:
+    """Tests for the ``parse_loop()`` method."""
+
+    def test_no_loop(self, instr):
+        """No loop set when the record doesn't configure a loop."""
+        instr.parse_loop({})
+        reconstructed.isidentifier.assert_not_called()
+        assert instr._loop is None
+        assert instr._loop_var is None
+
+    def test_loopvar_no_loop(self, instr):
+        """Parse error if the record configures a loop var without loop."""
+        with pytest.raises(AnsibleParserError):
+            instr.parse_loop({"loop_var": "test"})
+        reconstructed.isidentifier.assert_not_called()
+        assert instr._loop is None
+        assert instr._loop_var is None
+
+    def test_loop_bad_type(self, instr):
+        """Parse error if the record configures a loop with an invalid type."""
+        with pytest.raises(AnsibleParserError):
+            instr.parse_loop({"loop": {}})
+        reconstructed.isidentifier.assert_not_called()
+        assert instr._loop is None
+        assert instr._loop_var is None
+
+    def test_loopvar_bad_type(self, instr):
+        """Parse error if the record configures a loop var with an invalid type."""
+        with pytest.raises(AnsibleParserError):
+            instr.parse_loop({"loop": "test", "loop_var": {}})
+        reconstructed.isidentifier.assert_not_called()
+        assert instr._loop is None
+        assert instr._loop_var is None
+
+    def test_loopvar_invalid_identifier(self, instr):
+        """Parse error if the record configures a loop var with an invalid name."""
+        reconstructed.isidentifier.return_value = False
+        lv = "test"
+        with pytest.raises(AnsibleParserError):
+            instr.parse_loop({"loop": "test", "loop_var": lv})
+        reconstructed.isidentifier.assert_called_once_with(lv)
+        assert instr._loop is None
+        assert instr._loop_var is None
+
+    @pytest.mark.parametrize("value", ("test", ["test"]))
+    def test_loop_valid(self, instr, value):
+        """Condition is copied with default loop variable if it is valid."""
+        instr.parse_loop({"loop": value})
+        reconstructed.isidentifier.assert_called_once_with(instr.DEFAULT_LOOP_VAR)
+        assert instr._loop == value
+        assert instr._loop_var == instr.DEFAULT_LOOP_VAR
+
+    def test_loop_with_var(self, instr):
+        """Condition and loop var are copied if they are defined and valid."""
+        loop = "loop"
+        loop_var = "loop var"
+        instr.parse_loop({"loop": loop, "loop_var": loop_var})
+        reconstructed.isidentifier.assert_called_once_with(loop_var)
+        assert instr._loop == loop
+        assert instr._loop_var == loop_var

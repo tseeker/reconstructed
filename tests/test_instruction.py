@@ -30,13 +30,26 @@ def instr():
     )
 
 
+# ------------------------------------------------------------------------------
+
+
+def test_default_repr_instruction_only(instr: _Instruction):
+    """Default representation returns action followed by ``()``."""
+    rv = instr.repr_instruction_only()
+    assert rv == _INSTR_REPR
+
+
 class TestRepr:
     """Tests for the ``__repr__`` method."""
 
-    def test_default_repr_instruction_only(self, instr: _Instruction):
-        """Default representation returns action followed by ``()``."""
-        rv = instr.repr_instruction_only()
-        assert rv == _INSTR_REPR
+    @pytest.fixture
+    def instr(self):
+        """Create a mock instruction suitable for testing."""
+        instr = _Instruction(
+            mock.MagicMock(), mock.MagicMock(), mock.MagicMock(), _ACTION_NAME
+        )
+        instr.repr_instruction_only = mock.MagicMock(return_value=_INSTR_REPR)
+        return instr
 
     def test_repr_no_flow(self, instr: _Instruction):
         """``repr()`` returns default representation if there is no flow \

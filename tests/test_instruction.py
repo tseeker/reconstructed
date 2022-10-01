@@ -349,3 +349,54 @@ class TestParseLoop:
         reconstructed.isidentifier.assert_called_once_with(loop_var)
         assert instr._loop == loop
         assert instr._loop_var == loop_var
+
+
+class TestParseVars:
+    """Tests for the ``parse_vars()`` method."""
+
+    def test_no_vars(self, instr):
+        """No variables are returned if none are configured."""
+        rv = instr.parse_vars({})
+        assert rv == {}
+        reconstructed.isidentifier.assert_not_called()
+
+    def test_empty_vars(self, instr):
+        """No variables are returned if the input is empty."""
+        rv = instr.parse_vars({"vars": {}})
+        assert rv == {}
+        reconstructed.isidentifier.assert_not_called()
+
+    def test_invalid_type(self, instr):
+        """A parser error occurs if the input has the wrong type."""
+        record = {"vars": []}
+        with pytest.raises(AnsibleParserError):
+            instr.parse_vars(record)
+        reconstructed.isidentifier.assert_not_called()
+
+    @pytest.mark.parametrize("bad_id", (1, (), ("x",)))
+    def test_invalid_id_type(self, instr, bad_id):
+        """A parser error occurs if a variable identifier has the wrong type."""
+        record = {"vars": {bad_id: "ok"}}
+        with pytest.raises(AnsibleParserError):
+            instr.parse_vars(record)
+        reconstructed.isidentifier.assert_not_called()
+
+    def test_invalid_identifier(self, instr):
+        """A parser error occurs if a variable identifier is not a valid \
+                Ansible identifier."""
+        reconstructed.isidentifier.return_value = False
+        bad_id = "test"
+        record = {"vars": {bad_id: "ok"}}
+        with pytest.raises(AnsibleParserError):
+            instr.parse_vars(record)
+        reconstructed.isidentifier.assert_called_once_with(bad_id)
+
+    def test_valid_vars(self, instr):
+        """Configured variables are returned if they are valid."""
+        record = {"vars": {"a": "ok", "b": [], "c": {}}}
+        rv = instr.parse_vars(record)
+        assert rv is record["vars"]
+        isid_calls = reconstructed.isidentifier.call_args_list
+        assert len(isid_calls) == len(record["vars"])
+        for key in record["vars"].keys():
+            assert mock.call(key) in isid_calls

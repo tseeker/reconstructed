@@ -105,3 +105,64 @@ class TestRepr:
         assert rv.endswith("}" + _INSTR_REPR)
         for what in ("when=", "loop=", "loop_var=", "run_once", "vars="):
             assert "{" + what in rv or ", " + what in rv, f"element '{what}' not found"
+
+
+# ------------------------------------------------------------------------------
+
+
+def test_default_dump_instruction(instr: _Instruction):
+    """The default instruction-only dump returns a list that contains \
+            the default instruction representation."""
+    instr.repr_instruction_only = mock.MagicMock()
+    rv = instr.dump_instruction()
+    assert rv == [instr.repr_instruction_only.return_value]
+
+
+class TestDump:
+    """Tests for the ``dump()`` method."""
+
+    @pytest.fixture
+    def instr(self):
+        """Create a mock instruction suitable for testing."""
+        instr = _Instruction(
+            mock.MagicMock(), mock.MagicMock(), mock.MagicMock(), _ACTION_NAME
+        )
+        instr.dump_instruction = mock.MagicMock(return_value=[_INSTR_REPR])
+        return instr
+
+    def test_dump_instr_only(self, instr: _Instruction):
+        """The full dump only contains the instruction dump if there are no \
+                flow controls or local variables."""
+        rv = instr.dump()
+        assert rv == [_INSTR_REPR]
+
+    def test_dump_condition(self, instr: _Instruction):
+        """Conditions cause a dump entry to be generated."""
+        instr._condition = "test"
+        rv = instr.dump()
+        assert rv[-1] == _INSTR_REPR
+        assert "{when: " + repr(instr._condition) + "}" in rv
+
+    def test_dump_loop(self, instr: _Instruction):
+        """Loops cause a dump entry to be generated."""
+        instr._loop = [1, 2, 3]
+        instr._loop_var = "test"
+        rv = instr.dump()
+        assert rv[-1] == _INSTR_REPR
+        assert "{loop[" + instr._loop_var + "]: " + repr(instr._loop) + "}" in rv
+
+    @pytest.mark.parametrize("eo_value", (True, False))
+    def test_dump_runonce(self, instr: _Instruction, eo_value: bool):
+        """``dump()`` includes information about ``run_once``."""
+        instr._executed_once = eo_value
+        rv = instr.dump()
+        assert rv[-1] == _INSTR_REPR
+        assert "{run_once}" in rv
+
+    def test_dump_vars(self, instr: _Instruction):
+        """A dump entry is generated for each defined variable."""
+        instr._vars = {"a": 1, "b": 2}
+        rv = instr.dump()
+        assert rv[-1] == _INSTR_REPR
+        assert "{var a=1}" in rv
+        assert "{var b=2}" in rv

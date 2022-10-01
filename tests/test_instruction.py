@@ -426,3 +426,71 @@ class TestParseRunOnce:
         """Feature enabled if ``run_once`` is defined and set to ``True``."""
         instr.parse_run_once({"run_once": True})
         assert instr._executed_once is False
+
+
+class TestParseGroupName:
+    """Tests for the ``parse_group_name()`` helper method."""
+
+    @pytest.fixture(autouse=True)
+    def mock_constants(self):
+        reconstructed.C = mock.MagicMock()
+
+    def test_missing_field(self, instr):
+        """An error occurs if the field is missing."""
+        with pytest.raises(AnsibleParserError):
+            instr.parse_group_name({}, "test")
+        instr._templar.is_possibly_template.assert_not_called()
+        reconstructed.C.INVALID_VARIABLE_NAMES.findall.assert_not_called()
+
+    @pytest.mark.parametrize("bad_value", (1, [1], (1,), {"1": "2"}))
+    def test_invalid_type(self, instr, bad_value):
+        """An error occurs if the field has an incorrect type."""
+        name = "test"
+        with pytest.raises(AnsibleParserError):
+            instr.parse_group_name({name: bad_value}, name)
+        instr._templar.is_possibly_template.assert_not_called()
+        reconstructed.C.INVALID_VARIABLE_NAMES.findall.assert_not_called()
+
+    def test_may_be_template(self, instr):
+        """``True`` and value are returned if it may be a template."""
+        name = "test"
+        value = "  ament  "
+        instr._templar.is_possibly_template.return_value = True
+        rv = instr.parse_group_name({name: value}, name)
+        assert rv == (True, value)
+        instr._templar.is_possibly_template.assert_called_once_with(value)
+        reconstructed.C.INVALID_VARIABLE_NAMES.findall.assert_not_called()
+
+    def test_not_template_bad(self, instr):
+        """Value must be a valid variable name if it cannot possibly be a template."""
+        name = "test"
+        value = "ament"
+        instr._templar.is_possibly_template.return_value = False
+        reconstructed.C.INVALID_VARIABLE_NAMES.findall.return_value = True
+        with pytest.raises(AnsibleParserError):
+            instr.parse_group_name({name: value}, name)
+        instr._templar.is_possibly_template.assert_called_once_with(value)
+        reconstructed.C.INVALID_VARIABLE_NAMES.findall.assert_called_once()
+
+    def test_not_template_ok(self, instr):
+        """``False`` and value are returned if it isn't a template."""
+        name = "test"
+        value = "ament"
+        instr._templar.is_possibly_template.return_value = False
+        reconstructed.C.INVALID_VARIABLE_NAMES.findall.return_value = False
+        rv = instr.parse_group_name({name: value}, name)
+        assert rv == (False, value)
+        instr._templar.is_possibly_template.assert_called_once_with(value)
+        reconstructed.C.INVALID_VARIABLE_NAMES.findall.assert_called_once()
+
+    def test_not_template_strip(self, instr):
+        """Value is stripped if it cannot possibly be a template."""
+        name = "test"
+        value = "ament"
+        param = "    " + value + "    "
+        instr._templar.is_possibly_template.return_value = False
+        reconstructed.C.INVALID_VARIABLE_NAMES.findall.return_value = False
+        rv = instr.parse_group_name({name: param}, name)
+        assert rv == (False, value)
+        instr._templar.is_possibly_template.assert_called_once_with(param)
+        reconstructed.C.INVALID_VARIABLE_NAMES.findall.assert_called_once()

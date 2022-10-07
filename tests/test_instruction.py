@@ -837,3 +837,70 @@ class TestParseGroupName:
         assert rv == (False, value)
         instr._templar.is_possibly_template.assert_called_once_with(param)
         reconstructed.C.INVALID_VARIABLE_NAMES.findall.assert_called_once()
+
+
+class TestGetTemplatedGroup:
+    """Tests for the ``get_templated_group`` helper method."""
+
+    @pytest.fixture(autouse=True)
+    def mock_constants(self):
+        reconstructed.C = mock.MagicMock()
+
+    def test_not_a_template(self, instr, variables):
+        name = "abc"
+        rv = instr.get_templated_group(variables, False, name, False)
+        assert rv is name
+        assert instr._templar.available_variables is None
+        instr._templar.template.assert_not_called()
+
+    def test_must_exist_ok(self, instr, variables):
+        name = "abc"
+        instr._inventory.groups = {name: 1}
+        rv = instr.get_templated_group(variables, False, name, True)
+        assert rv is name
+
+    def test_must_exist_nok(self, instr, variables):
+        name = "abc"
+        instr._inventory.groups = {name + "nope": 1}
+        with pytest.raises(AnsibleRuntimeError):
+            instr.get_templated_group(variables, False, name, True)
+
+    def test_template_bad_type(self, instr, variables):
+        name = "abc"
+        instr._templar.template.return_value = ()
+        #
+        with pytest.raises(AnsibleRuntimeError):
+            instr.get_templated_group(variables, True, name)
+        #
+        assert instr._templar.available_variables is variables
+        instr._templar.template.assert_called_once_with(name)
+        reconstructed.C.findall.assert_not_called()
+
+    def test_template_invalid_name(self, instr):
+        name = "abc"
+        instr._templar.template.return_value = name + "rv"
+        reconstructed.C.INVALID_VARIABLE_NAMES.findall.return_value = True
+        #
+        with pytest.raises(AnsibleRuntimeError):
+            instr.get_templated_group(variables, True, name)
+        #
+        assert instr._templar.available_variables is variables
+        instr._templar.template.assert_called_once_with(name)
+        reconstructed.C.INVALID_VARIABLE_NAMES.findall.assert_called_once_with(
+            name + "rv"
+        )
+
+    @pytest.mark.parametrize(
+        "t_input, t_output", [("abc", "abc"), ("   abc   ", "abc")]
+    )
+    def test_template_values(self, instr, variables, t_input, t_output):
+        name = "abc"
+        instr._templar.template.return_value = t_input
+        reconstructed.C.INVALID_VARIABLE_NAMES.findall.return_value = False
+        #
+        rv = instr.get_templated_group(variables, True, name)
+        #
+        assert instr._templar.available_variables is variables
+        instr._templar.template.assert_called_once_with(name)
+        reconstructed.C.INVALID_VARIABLE_NAMES.findall.assert_called_once_with(t_output)
+        assert rv == t_output

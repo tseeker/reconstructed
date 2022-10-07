@@ -538,7 +538,7 @@ class RcInstruction(abc.ABC):
             ``True`` if execution must continue, ``False`` if it must be
             interrupted
         """
-        self.compute_locals(host_name, variables)
+        self.compute_locals(variables)
         if self.evaluate_condition(host_name, variables):
             rv = self.execute_action(host_name, variables)
             if not rv:
@@ -578,14 +578,13 @@ class RcInstruction(abc.ABC):
         )
         return rv
 
-    def compute_locals(self, host_name, variables):
+    def compute_locals(self, variables):
         """Compute local variables.
 
         This method iterates through all local variable definitions and runs
         them through the templar.
 
         Args:
-            host_name: the name of the host the instruction is being executed for
             variables: the variable storage instance
         """
         self._templar.available_variables = variables

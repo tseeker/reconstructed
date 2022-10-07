@@ -1,7 +1,7 @@
-"""Tests for the instruction base class."""
+"""Unit tests for the instruction base class."""
 import pytest
 from unittest import mock
-from ansible.errors import AnsibleParserError
+from ansible.errors import AnsibleParserError, AnsibleRuntimeError
 
 from . import reconstructed
 
@@ -26,9 +26,15 @@ _INSTR_REPR = _ACTION_NAME + "()"
 @pytest.fixture
 def instr():
     """Create a mock instruction suitable for testing."""
-    return _Instruction(
-        mock.MagicMock(), mock.MagicMock(), mock.MagicMock(), _ACTION_NAME
-    )
+    i = _Instruction(mock.MagicMock(), mock.MagicMock(), mock.MagicMock(), _ACTION_NAME)
+    i._templar.available_variables = None
+    return i
+
+
+@pytest.fixture
+def variables():
+    """Create a mock variable storage object."""
+    return mock.MagicMock()
 
 
 @pytest.fixture(autouse=True)
@@ -426,6 +432,343 @@ class TestParseRunOnce:
         """Feature enabled if ``run_once`` is defined and set to ``True``."""
         instr.parse_run_once({"run_once": True})
         assert instr._executed_once is False
+
+
+# ------------------------------------------------------------------------------
+
+
+class TestRunFor:
+    """Tests for the ``run_for()`` method."""
+
+    @pytest.fixture
+    def instr(self):
+        """Create a mock instruction suitable for testing."""
+        instr = _Instruction(
+            mock.MagicMock(), mock.MagicMock(), mock.MagicMock(), _ACTION_NAME
+        )
+        instr.run_iteration = mock.MagicMock()
+        instr.evaluate_loop = mock.MagicMock()
+        return instr
+
+    def test_run_no_loop(self, instr, variables):
+        """Running with no loop set causes ``run_iteration()`` to be called."""
+        hn = object()
+        save = object()
+        instr._save = save
+        instr._executed_once = None
+        #
+        rv = instr.run_for(hn, variables)
+        #
+        assert instr._executed_once is None
+        variables._script_stack_push.assert_called_once_with(save)
+        variables._script_stack_pop.assert_called_once_with()
+        instr.run_iteration.assert_called_once_with(hn, variables)
+        instr.evaluate_loop.assert_not_called()
+        assert rv is instr.run_iteration.return_value
+
+    def test_crash_no_loop(self, instr, variables):
+        """If ``run_iteration()`` crashes when there is no loop, the stack \
+                is popped and the exception is propagated."""
+        hn = object()
+        save = object()
+        instr._save = save
+        instr._executed_once = None
+        instr.run_iteration.side_effect = RuntimeError
+        #
+        with pytest.raises(RuntimeError):
+            instr.run_for(hn, variables)
+        #
+        assert instr._executed_once is None
+        variables._script_stack_push.assert_called_once_with(save)
+        variables._script_stack_pop.assert_called_once_with()
+        instr.run_iteration.assert_called_once_with(hn, variables)
+
+    def test_run_once_first_time(self, instr, variables):
+        """The method updates the execution flag and executes the iteration \
+                if it is set to run once but hasn't been called yet."""
+        hn = object()
+        save = object()
+        instr._save = save
+        instr._executed_once = False
+        #
+        rv = instr.run_for(hn, variables)
+        #
+        assert instr._executed_once is True
+        variables._script_stack_push.assert_called_once_with(save)
+        variables._script_stack_pop.assert_called_once_with()
+        instr.run_iteration.assert_called_once_with(hn, variables)
+        instr.evaluate_loop.assert_not_called()
+        assert rv is instr.run_iteration.return_value
+
+    def test_run_once_already_called(self, instr, variables):
+        """The method returns ``True`` but does nothing if it has already been \
+                called."""
+        hn = object()
+        save = object()
+        instr._save = save
+        instr._executed_once = True
+        #
+        rv = instr.run_for(hn, variables)
+        #
+        assert instr._executed_once is True
+        variables._script_stack_push.assert_not_called()
+        variables._script_stack_pop.assert_not_called()
+        instr.run_iteration.assert_not_called()
+        instr.evaluate_loop.assert_not_called()
+        assert rv is True
+
+    def test_run_loop(self, instr, variables):
+        """Running with a loop set causes ``evaluate_loop()`` to be called, \
+                followed by a call to ``run_iteration()`` for each value it \
+                returned."""
+        hn = object()
+        save = object()
+        lv = object()
+        instr._save = save
+        instr._executed_once = None
+        instr._loop = [1]
+        instr._loop_var = lv
+        instr.evaluate_loop.return_value = (1, 2, 3)
+        #
+        rv = instr.run_for(hn, variables)
+        #
+        assert instr._executed_once is None
+        variables._script_stack_push.assert_called_once_with(save)
+        variables._script_stack_pop.assert_called_once_with()
+        instr.evaluate_loop.assert_called_once_with(hn, variables)
+        assert variables.__setitem__.call_args_list == [
+            mock.call(lv, 1),
+            mock.call(lv, 2),
+            mock.call(lv, 3),
+        ]
+        assert instr.run_iteration.call_args_list == [
+            mock.call(hn, variables),
+            mock.call(hn, variables),
+            mock.call(hn, variables),
+        ]
+        assert rv is True
+
+    def test_run_loop_exit(self, instr, variables):
+        """If ``run_iteration()`` returns a falsy value, the loop is interrupted."""
+        hn = object()
+        save = object()
+        lv = object()
+        instr._save = save
+        instr._executed_once = None
+        instr._loop = [1]
+        instr._loop_var = lv
+        instr.evaluate_loop.return_value = (1, 2, 3)
+        instr.run_iteration.return_value = False
+        #
+        rv = instr.run_for(hn, variables)
+        #
+        assert instr._executed_once is None
+        variables._script_stack_push.assert_called_once_with(save)
+        variables._script_stack_pop.assert_called_once_with()
+        instr.evaluate_loop.assert_called_once_with(hn, variables)
+        assert variables.__setitem__.call_args_list == [mock.call(lv, 1)]
+        assert instr.run_iteration.call_args_list == [mock.call(hn, variables)]
+        assert rv is False
+
+    def test_crash_loop(self, instr, variables):
+        """If ``run_iteration()`` crashes when there is a loop, the stack \
+                is popped and the exception is propagated."""
+        hn = object()
+        save = object()
+        lv = object()
+        instr._save = save
+        instr._executed_once = None
+        instr._loop = [1]
+        instr._loop_var = lv
+        instr.evaluate_loop.return_value = (1, 2, 3)
+        instr.run_iteration.side_effect = RuntimeError
+        #
+        with pytest.raises(RuntimeError):
+            instr.run_for(hn, variables)
+        #
+        assert instr._executed_once is None
+        variables._script_stack_push.assert_called_once_with(save)
+        variables._script_stack_pop.assert_called_once_with()
+        assert variables.__setitem__.call_args_list == [mock.call(lv, 1)]
+        assert instr.run_iteration.call_args_list == [mock.call(hn, variables)]
+
+
+class TestRunIteration:
+    """Tests for the ``run_iteration()`` method."""
+
+    @pytest.fixture
+    def instr(self):
+        """Create a mock instruction suitable for testing."""
+        instr = _Instruction(
+            mock.MagicMock(), mock.MagicMock(), mock.MagicMock(), _ACTION_NAME
+        )
+        instr.compute_locals = mock.MagicMock()
+        instr.evaluate_condition = mock.MagicMock()
+        instr.execute_action = mock.MagicMock()
+        return instr
+
+    def test_run_cond_false(self, instr, variables):
+        """If the condition is not satisfied, ``True`` is returned but the \
+                action is not executed."""
+        hn = object()
+        instr.evaluate_condition.return_value = False
+        #
+        rv = instr.run_iteration(hn, variables)
+        #
+        instr.compute_locals.assert_called_once_with(variables)
+        instr.evaluate_condition.assert_called_once_with(hn, variables)
+        instr.execute_action.assert_not_called()
+        instr._display.vvvvv.assert_not_called()
+        assert rv is True
+
+    def test_run_cond_true(self, instr, variables):
+        """If the condition is satisfied, the action is executed and its \
+                return value is returned."""
+        hn = object()
+        instr.evaluate_condition.return_value = True
+        #
+        rv = instr.run_iteration(hn, variables)
+        #
+        instr.compute_locals.assert_called_once_with(variables)
+        instr.evaluate_condition.assert_called_once_with(hn, variables)
+        instr.execute_action.assert_called_once_with(hn, variables)
+        instr._display.vvvvv.assert_not_called()
+        assert rv is instr.execute_action.return_value
+
+    def test_run_interrupt(self, instr, variables):
+        """If the condition is satisfied and the action returns ``False``, a \
+                debug message is displayed."""
+        hn = object()
+        instr.evaluate_condition.return_value = True
+        instr.execute_action.return_value = False
+        #
+        rv = instr.run_iteration(hn, variables)
+        #
+        instr.compute_locals.assert_called_once_with(variables)
+        instr.evaluate_condition.assert_called_once_with(hn, variables)
+        instr.execute_action.assert_called_once_with(hn, variables)
+        instr._display.vvvvv.assert_called_once()
+        assert rv is False
+
+
+class TestEvaluateCondition:
+    """Tests for the ``evaluate_condition()`` method."""
+
+    @pytest.fixture
+    def instr(self):
+        """Create a mock instruction suitable for testing."""
+        instr = _Instruction(
+            mock.MagicMock(), mock.MagicMock(), mock.MagicMock(), _ACTION_NAME
+        )
+        instr._templar.environment.variable_start_string = "<--"
+        instr._templar.environment.variable_end_string = "-->"
+        return instr
+
+    @pytest.fixture(autouse=True)
+    def boolean(self):
+        """The Ansible-provided ``boolean`` utility function."""
+        reconstructed.boolean = mock.MagicMock()
+        return reconstructed.boolean
+
+    def test_no_condition(self, instr, boolean):
+        """When there is no condition, ``True`` is returned without the \
+                template being used."""
+        instr._condition = None
+        variables = object()
+        host_name = object()
+        #
+        rv = instr.evaluate_condition(host_name, variables)
+        #
+        assert rv is True
+        instr._templar.template.assert_not_called()
+        boolean.assert_not_called()
+
+    def test_condition_value(self, instr, boolean):
+        """When there is a condition, the template is evaluated, and the \
+                results are converted to a boolean and returned."""
+        cond = "abc"
+        variables = object()
+        host_name = object()
+        instr._condition = cond
+        #
+        rv = instr.evaluate_condition(host_name, variables)
+        #
+        assert instr._templar.available_variables is variables
+        instr._templar.template.assert_called_once_with(
+            f"<--{cond}-->", disable_lookups=False
+        )
+        boolean.assert_called_once_with(instr._templar.template.return_value)
+        assert rv is boolean.return_value
+
+
+class TestComputeLocals:
+    """Tests for the ``compute_locals()`` method."""
+
+    @pytest.fixture
+    def instr(self):
+        """Create a mock instruction suitable for testing."""
+        instr = _Instruction(
+            mock.MagicMock(), mock.MagicMock(), mock.MagicMock(), _ACTION_NAME
+        )
+        instr._templar.template.side_effect = lambda x: x
+        return instr
+
+    def test_compute_locals(self, instr, variables):
+        """Templates are evaluated for each local variable."""
+        instr._templar.available_variables = None
+        obj1, obj2, obj3, obj4 = object(), object(), object(), object()
+        instr._vars = {obj1: obj2, obj3: obj4}
+        #
+        instr.compute_locals(variables)
+        #
+        assert instr._templar.available_variables is variables
+        assert instr._templar.template.call_args_list == [
+            mock.call(obj2),
+            mock.call(obj4),
+        ]
+        assert variables.__setitem__.call_args_list == [
+            mock.call(obj1, obj2),
+            mock.call(obj3, obj4),
+        ]
+
+
+class TestEvaluateLoop:
+    """Tests for the ``evaluate_loop()`` method."""
+
+    def test_list_returned(self, instr):
+        """When a list is returned by the template's evaluation, it is \
+                passed on by the method."""
+        iv = object()
+        v = object()
+        erv = []
+        instr._loop = iv
+        instr._templar.available_variables = None
+        instr._templar.template.return_value = erv
+        #
+        rv = instr.evaluate_loop("test", v)
+        #
+        assert instr._templar.available_variables is v
+        instr._templar.template.assert_called_once_with(iv, disable_lookups=False)
+        assert rv is erv
+
+    def test_bad_return_type(self, instr):
+        """When something that isn't a list is returned by the template's \
+                evaluation, an Ansible runtime error occurs."""
+        iv = object()
+        v = object()
+        erv = {}
+        instr._loop = iv
+        instr._templar.available_variables = None
+        instr._templar.template.return_value = erv
+        #
+        with pytest.raises(AnsibleRuntimeError):
+            instr.evaluate_loop("test", v)
+        #
+        assert instr._templar.available_variables is v
+        instr._templar.template.assert_called_once_with(iv, disable_lookups=False)
+
+
+# ------------------------------------------------------------------------------
 
 
 class TestParseGroupName:

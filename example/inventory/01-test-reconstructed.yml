@@ -1,5 +1,5 @@
 ---
-plugin: reconstructed
+plugin: tseeker.reconstructed.reconstructed
 instructions:
 
   # Check whether that host is managed

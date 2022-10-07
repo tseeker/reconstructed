@@ -23,7 +23,7 @@ DOCUMENTATION = """
         - Token that ensures this is a source file for the C(group_creator)
           plugin.
         required: True
-        choices: ['reconstructed']
+        choices: ['tseeker.reconstructed.reconstructed','reconstructed']
       instructions:
         description:
         - The list of instructions to be executed in order to generate the
@@ -1042,7 +1042,7 @@ def parse_instruction(inventory, templar, display, record):
 class InventoryModule(BaseInventoryPlugin):
     """Constructs groups based on lists of instructions."""
 
-    NAME = "reconstructed"
+    NAME = "tseeker.reconstructed.reconstructed"
 
     def verify_file(self, path):
         return super().verify_file(path) and path.endswith((".yaml", ".yml"))

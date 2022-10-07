@@ -565,6 +565,7 @@ class RcInstruction(abc.ABC):
         if self._condition is None:
             return True
         t = self._templar
+        t.available_variables = variables
         template = "%s%s%s" % (
             t.environment.variable_start_string,
             self._condition,

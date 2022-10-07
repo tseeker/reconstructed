@@ -633,7 +633,7 @@ class RcInstruction(abc.ABC):
         if may_be_template:
             self._templar.available_variables = variables
             real_name = self._templar.template(name)
-            if not isinstance(name, string_types):
+            if not isinstance(real_name, string_types):
                 raise AnsibleRuntimeError(
                     "%s: '%s' did not coalesce into a string" % (self._action, name)
                 )

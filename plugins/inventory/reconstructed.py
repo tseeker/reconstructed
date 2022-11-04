@@ -4,10 +4,11 @@ from collections.abc import MutableMapping
 
 from ansible import constants as C
 from ansible.errors import AnsibleParserError, AnsibleRuntimeError, AnsibleError
+from ansible.inventory.helpers import get_group_vars
 from ansible.module_utils.six import string_types
 from ansible.module_utils.parsing.convert_bool import boolean
-from ansible.utils.vars import isidentifier
 from ansible.plugins.inventory import BaseInventoryPlugin
+from ansible.utils.vars import isidentifier, combine_vars
 
 DOCUMENTATION = """
     name: reconstructed
@@ -1080,8 +1081,10 @@ class InventoryModule(BaseInventoryPlugin):
             host: the name of the host to execute for
             instructions: the list of instructions to execute
         """
-        host_vars = self.inventory.get_host(host).get_vars()
-        variables = VariableStorage(host_vars)
+        host_obj = self.inventory.get_host(host)
+        host_vars = host_obj.get_vars()
+        group_vars = get_group_vars(host_obj.get_groups())
+        variables = VariableStorage(combine_vars(group_vars, host_vars))
         for instruction in instructions:
             if not instruction.run_for(host, variables):
                 return

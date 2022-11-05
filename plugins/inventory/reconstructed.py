@@ -1083,7 +1083,10 @@ class InventoryModule(BaseInventoryPlugin):
         """
         host_obj = self.inventory.get_host(host)
         host_vars = host_obj.get_vars()
-        group_vars = get_group_vars(host_obj.get_groups())
+        host_groups = host_obj.get_groups().copy()
+        if not any(g.name == "all" for g in host_groups):
+            host_groups.append(self.inventory.groups["all"])
+        group_vars = get_group_vars(host_groups)
         variables = VariableStorage(combine_vars(group_vars, host_vars))
         for instruction in instructions:
             if not instruction.run_for(host, variables):

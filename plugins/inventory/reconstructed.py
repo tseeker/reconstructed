@@ -114,6 +114,24 @@ INSTR_FIELDS = {k: set(v + INSTR_COMMON_FIELDS) for k, v in INSTR_OWN_FIELDS.ite
 """All supported fields for each instruction, including common and specific fields."""
 
 
+class Context:
+    """Script execution context.
+
+    This class contains the script's context when it is executed for a given
+    host. This includes the variable storage instance as well as the host's new
+    name  if a ``rename_host`` instruction has been executed.
+    """
+
+    def __init__(self, host_vars):
+        """Initialize the context.
+
+        Args:
+            host_vars: the host variables
+        """
+        self.variables = VariableStorage(host_vars)
+        self.new_name = None
+
+
 class VariableStorage(MutableMapping):
     """Variable storage and cache.
 

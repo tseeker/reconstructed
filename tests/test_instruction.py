@@ -12,7 +12,7 @@ class _Instruction(reconstructed.RcInstruction):
     def parse_action(self, record):
         pass
 
-    def execute_action(self, host_name, variables):
+    def execute_action(self, host_name, context):
         pass
 
 
@@ -35,6 +35,14 @@ def instr():
 def variables():
     """Create a mock variable storage object."""
     return mock.MagicMock()
+
+
+@pytest.fixture
+def context(variables):
+    """Create a mock execution context."""
+    c = mock.MagicMock()
+    c.variables = variables
+    return c
 
 
 @pytest.fixture(autouse=True)
@@ -450,23 +458,23 @@ class TestRunFor:
         instr.evaluate_loop = mock.MagicMock()
         return instr
 
-    def test_run_no_loop(self, instr, variables):
+    def test_run_no_loop(self, instr, context):
         """Running with no loop set causes ``run_iteration()`` to be called."""
         hn = object()
         save = object()
         instr._save = save
         instr._executed_once = None
         #
-        rv = instr.run_for(hn, variables)
+        rv = instr.run_for(hn, context)
         #
         assert instr._executed_once is None
-        variables._script_stack_push.assert_called_once_with(save)
-        variables._script_stack_pop.assert_called_once_with()
-        instr.run_iteration.assert_called_once_with(hn, variables)
+        context.variables._script_stack_push.assert_called_once_with(save)
+        context.variables._script_stack_pop.assert_called_once_with()
+        instr.run_iteration.assert_called_once_with(hn, context)
         instr.evaluate_loop.assert_not_called()
         assert rv is instr.run_iteration.return_value
 
-    def test_crash_no_loop(self, instr, variables):
+    def test_crash_no_loop(self, instr, context):
         """If ``run_iteration()`` crashes when there is no loop, the stack \
                 is popped and the exception is propagated."""
         hn = object()
@@ -476,14 +484,14 @@ class TestRunFor:
         instr.run_iteration.side_effect = RuntimeError
         #
         with pytest.raises(RuntimeError):
-            instr.run_for(hn, variables)
+            instr.run_for(hn, context)
         #
         assert instr._executed_once is None
-        variables._script_stack_push.assert_called_once_with(save)
-        variables._script_stack_pop.assert_called_once_with()
-        instr.run_iteration.assert_called_once_with(hn, variables)
+        context.variables._script_stack_push.assert_called_once_with(save)
+        context.variables._script_stack_pop.assert_called_once_with()
+        instr.run_iteration.assert_called_once_with(hn, context)
 
-    def test_run_once_first_time(self, instr, variables):
+    def test_run_once_first_time(self, instr, context):
         """The method updates the execution flag and executes the iteration \
                 if it is set to run once but hasn't been called yet."""
         hn = object()
@@ -491,16 +499,16 @@ class TestRunFor:
         instr._save = save
         instr._executed_once = False
         #
-        rv = instr.run_for(hn, variables)
+        rv = instr.run_for(hn, context)
         #
         assert instr._executed_once is True
-        variables._script_stack_push.assert_called_once_with(save)
-        variables._script_stack_pop.assert_called_once_with()
-        instr.run_iteration.assert_called_once_with(hn, variables)
+        context.variables._script_stack_push.assert_called_once_with(save)
+        context.variables._script_stack_pop.assert_called_once_with()
+        instr.run_iteration.assert_called_once_with(hn, context)
         instr.evaluate_loop.assert_not_called()
         assert rv is instr.run_iteration.return_value
 
-    def test_run_once_already_called(self, instr, variables):
+    def test_run_once_already_called(self, instr, context):
         """The method returns ``True`` but does nothing if it has already been \
                 called."""
         hn = object()
@@ -508,16 +516,16 @@ class TestRunFor:
         instr._save = save
         instr._executed_once = True
         #
-        rv = instr.run_for(hn, variables)
+        rv = instr.run_for(hn, context)
         #
         assert instr._executed_once is True
-        variables._script_stack_push.assert_not_called()
-        variables._script_stack_pop.assert_not_called()
+        context.variables._script_stack_push.assert_not_called()
+        context.variables._script_stack_pop.assert_not_called()
         instr.run_iteration.assert_not_called()
         instr.evaluate_loop.assert_not_called()
         assert rv is True
 
-    def test_run_loop(self, instr, variables):
+    def test_run_loop(self, instr, context):
         """Running with a loop set causes ``evaluate_loop()`` to be called, \
                 followed by a call to ``run_iteration()`` for each value it \
                 returned."""
@@ -530,25 +538,25 @@ class TestRunFor:
         instr._loop_var = lv
         instr.evaluate_loop.return_value = (1, 2, 3)
         #
-        rv = instr.run_for(hn, variables)
+        rv = instr.run_for(hn, context)
         #
         assert instr._executed_once is None
-        variables._script_stack_push.assert_called_once_with(save)
-        variables._script_stack_pop.assert_called_once_with()
-        instr.evaluate_loop.assert_called_once_with(hn, variables)
-        assert variables.__setitem__.call_args_list == [
+        context.variables._script_stack_push.assert_called_once_with(save)
+        context.variables._script_stack_pop.assert_called_once_with()
+        instr.evaluate_loop.assert_called_once_with(hn, context.variables)
+        assert context.variables.__setitem__.call_args_list == [
             mock.call(lv, 1),
             mock.call(lv, 2),
             mock.call(lv, 3),
         ]
         assert instr.run_iteration.call_args_list == [
-            mock.call(hn, variables),
-            mock.call(hn, variables),
-            mock.call(hn, variables),
+            mock.call(hn, context),
+            mock.call(hn, context),
+            mock.call(hn, context),
         ]
         assert rv is True
 
-    def test_run_loop_exit(self, instr, variables):
+    def test_run_loop_exit(self, instr, context):
         """If ``run_iteration()`` returns a falsy value, the loop is interrupted."""
         hn = object()
         save = object()
@@ -560,17 +568,17 @@ class TestRunFor:
         instr.evaluate_loop.return_value = (1, 2, 3)
         instr.run_iteration.return_value = False
         #
-        rv = instr.run_for(hn, variables)
+        rv = instr.run_for(hn, context)
         #
         assert instr._executed_once is None
-        variables._script_stack_push.assert_called_once_with(save)
-        variables._script_stack_pop.assert_called_once_with()
-        instr.evaluate_loop.assert_called_once_with(hn, variables)
-        assert variables.__setitem__.call_args_list == [mock.call(lv, 1)]
-        assert instr.run_iteration.call_args_list == [mock.call(hn, variables)]
+        context.variables._script_stack_push.assert_called_once_with(save)
+        context.variables._script_stack_pop.assert_called_once_with()
+        instr.evaluate_loop.assert_called_once_with(hn, context.variables)
+        assert context.variables.__setitem__.call_args_list == [mock.call(lv, 1)]
+        assert instr.run_iteration.call_args_list == [mock.call(hn, context)]
         assert rv is False
 
-    def test_crash_loop(self, instr, variables):
+    def test_crash_loop(self, instr, context):
         """If ``run_iteration()`` crashes when there is a loop, the stack \
                 is popped and the exception is propagated."""
         hn = object()
@@ -584,13 +592,13 @@ class TestRunFor:
         instr.run_iteration.side_effect = RuntimeError
         #
         with pytest.raises(RuntimeError):
-            instr.run_for(hn, variables)
+            instr.run_for(hn, context)
         #
         assert instr._executed_once is None
-        variables._script_stack_push.assert_called_once_with(save)
-        variables._script_stack_pop.assert_called_once_with()
-        assert variables.__setitem__.call_args_list == [mock.call(lv, 1)]
-        assert instr.run_iteration.call_args_list == [mock.call(hn, variables)]
+        context.variables._script_stack_push.assert_called_once_with(save)
+        context.variables._script_stack_pop.assert_called_once_with()
+        assert context.variables.__setitem__.call_args_list == [mock.call(lv, 1)]
+        assert instr.run_iteration.call_args_list == [mock.call(hn, context)]
 
 
 class TestRunIteration:
@@ -607,46 +615,46 @@ class TestRunIteration:
         instr.execute_action = mock.MagicMock()
         return instr
 
-    def test_run_cond_false(self, instr, variables):
+    def test_run_cond_false(self, instr, context):
         """If the condition is not satisfied, ``True`` is returned but the \
                 action is not executed."""
         hn = object()
         instr.evaluate_condition.return_value = False
         #
-        rv = instr.run_iteration(hn, variables)
+        rv = instr.run_iteration(hn, context)
         #
-        instr.compute_locals.assert_called_once_with(variables)
-        instr.evaluate_condition.assert_called_once_with(hn, variables)
+        instr.compute_locals.assert_called_once_with(context.variables)
+        instr.evaluate_condition.assert_called_once_with(hn, context.variables)
         instr.execute_action.assert_not_called()
         instr._display.vvvvv.assert_not_called()
         assert rv is True
 
-    def test_run_cond_true(self, instr, variables):
+    def test_run_cond_true(self, instr, context):
         """If the condition is satisfied, the action is executed and its \
                 return value is returned."""
         hn = object()
         instr.evaluate_condition.return_value = True
         #
-        rv = instr.run_iteration(hn, variables)
+        rv = instr.run_iteration(hn, context)
         #
-        instr.compute_locals.assert_called_once_with(variables)
-        instr.evaluate_condition.assert_called_once_with(hn, variables)
-        instr.execute_action.assert_called_once_with(hn, variables)
+        instr.compute_locals.assert_called_once_with(context.variables)
+        instr.evaluate_condition.assert_called_once_with(hn, context.variables)
+        instr.execute_action.assert_called_once_with(hn, context)
         instr._display.vvvvv.assert_not_called()
         assert rv is instr.execute_action.return_value
 
-    def test_run_interrupt(self, instr, variables):
+    def test_run_interrupt(self, instr, context):
         """If the condition is satisfied and the action returns ``False``, a \
                 debug message is displayed."""
         hn = object()
         instr.evaluate_condition.return_value = True
         instr.execute_action.return_value = False
         #
-        rv = instr.run_iteration(hn, variables)
+        rv = instr.run_iteration(hn, context)
         #
-        instr.compute_locals.assert_called_once_with(variables)
-        instr.evaluate_condition.assert_called_once_with(hn, variables)
-        instr.execute_action.assert_called_once_with(hn, variables)
+        instr.compute_locals.assert_called_once_with(context.variables)
+        instr.evaluate_condition.assert_called_once_with(hn, context.variables)
+        instr.execute_action.assert_called_once_with(hn, context)
         instr._display.vvvvv.assert_called_once()
         assert rv is False
 

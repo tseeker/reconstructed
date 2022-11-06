@@ -118,6 +118,14 @@ used:
     to write to the output. By default the message will be `fail requested`
     followed by the name of the current host.
 
+#### rename_host
+
+This action changes the name of the current host. It can only be executed once
+for each host. The actual renaming will occur after the script has completed
+its execution. It requires the following field:
+
+  * `name`: the new name of the host.
+
 #### set_fact
 
 This action sets an Ansible fact associated to the current host. The following

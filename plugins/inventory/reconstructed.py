@@ -7,6 +7,7 @@ from ansible.errors import AnsibleParserError, AnsibleRuntimeError, AnsibleError
 from ansible.inventory.helpers import get_group_vars
 from ansible.module_utils.six import string_types
 from ansible.module_utils.parsing.convert_bool import boolean
+from ansible.parsing.utils import addresses
 from ansible.plugins.inventory import BaseInventoryPlugin
 from ansible.utils.vars import isidentifier, combine_vars
 
@@ -82,6 +83,8 @@ DOCUMENTATION = """
           Jinja templates.
         - C(stop) stops processing the list of instructions for the current
           host.
+        - C(rename_host) changes a host's name. It can only be executed once per
+          host.
         type: list
         elements: dict
         required: True
@@ -104,6 +107,7 @@ INSTR_OWN_FIELDS = {
     "block": ("block", "rescue", "always", "locals"),
     "create_group": ("group", "parent", "add_host"),
     "fail": ("msg",),
+    "rename_host": ("name",),
     "set_fact": ("name", "value"),
     "set_var": ("name", "value"),
     "stop": (),
@@ -915,6 +919,46 @@ class RciFail(RcInstruction):
         raise AnsibleRuntimeError(message)
 
 
+class RciRenameHost(RcInstruction):
+    """``rename_host`` instruction implementation."""
+
+    def __init__(self, inventory, templar, display):
+        super().__init__(inventory, templar, display, "rename_host")
+        self._name = None
+        self._name_may_be_template = None
+
+    def parse_action(self, record):
+        assert self._name is None and self._name_may_be_template is None
+        if "name" not in record:
+            raise AnsibleParserError("%s: missing 'name' field" % (self._action,))
+        name = record["name"]
+        if not isinstance(name, string_types):
+            raise AnsibleParserError("%s: 'name' must be a string" % (self._action,))
+        nmbt = self._templar.is_possibly_template(name)
+        if not (nmbt or addresses.patterns['hostname'].match(name)):
+            raise AnsibleParserError(
+                "%s: '%s' is not a valid host name" % (self._action, name)
+            )
+        self._name_may_be_template = nmbt
+        self._name = name
+
+    def execute_action(self, host_name, context):
+        if context.new_name is not None:
+            raise AnsibleRuntimeError("Host has already been renamed")
+        if self._name_may_be_template:
+            self._templar.available_variables = context.variables
+            name = self._templar.template(self._name)
+            if not addresses.patterns['hostname'].match(name):
+                raise AnsibleRuntimeError(
+                    "%s: '%s' is not a valid host name" % (self._action, name)
+                )
+        else:
+            name = self._name
+        self._display.vvv("- renaming host %s to %s" % (host_name, name))
+        context.new_name = name
+        return True
+
+
 class RciBlock(RcInstruction):
     """``block`` instruction implementation."""
 
@@ -1042,6 +1086,7 @@ INSTRUCTIONS = {
     "block": RciBlock,
     "create_group": RciCreateGroup,
     "fail": RciFail,
+    "rename_host": RciRenameHost,
     "set_fact": lambda i, t, d: RciSetVarOrFact(i, t, d, True),
     "set_var": lambda i, t, d: RciSetVarOrFact(i, t, d, False),
     "stop": RciStop,
@@ -1077,16 +1122,25 @@ class InventoryModule(BaseInventoryPlugin):
             )
         self.dump_program(instructions)
         # Execute it for each host
+        rename = []
         for host in inventory.hosts:
             self.display.vvv("executing reconstructed script for %s" % (host,))
             try:
-                self.exec_for_host(host, instructions)
+                new_name = self.exec_for_host(host, instructions)
             except AnsibleError as e:
                 if self.get_option("strictness") == "full":
                     raise
                 self.display.warning(
                     "reconstructed - error on host %s: %s" % (host, repr(e))
                 )
+                continue
+            if new_name is not None:
+                rename.append((host, new_name))
+        # Rename hosts
+        for old_name, new_name in rename:
+            if old_name.lower() == new_name.lower():
+                continue
+            self.rename_host(old_name, new_name)
 
     def exec_for_host(self, host, instructions):
         """Execute the program for a single host.
@@ -1107,7 +1161,8 @@ class InventoryModule(BaseInventoryPlugin):
         context = Context(combine_vars(group_vars, host_vars))
         for instruction in instructions:
             if not instruction.run_for(host, context):
-                return
+                break
+        return context.new_name
 
     def dump_program(self, instructions):
         """Dump the whole program to the log, depending on verbosity level.
@@ -1129,3 +1184,33 @@ class InventoryModule(BaseInventoryPlugin):
                 output.append("")
             output.extend(instr.dump())
         self.display.vvvv("parsed program:\n\n" + "\n".join("  " + s for s in output))
+
+    def rename_host(self, old_name, new_name):
+        """Renames a host.
+
+        This method "renames" a host by removing the host's current inventory
+        record and creating a new one with the same data, except for the name.
+
+        Args:
+            old_name: the host's old name
+            new_name: the host's new name
+        """
+        if self.inventory.get_host(new_name) is not None:
+            raise AnsibleRuntimeError("duplicate host name %s" % (new_name,))
+        self.display.vvv("renaming host %s to %s" % (old_name, new_name))
+        host = self.inventory.get_host(old_name)
+        group_names = []
+        for g in host.get_groups():
+            if g.name == 'all':
+                continue
+            if old_name in g.host_names:
+                group_names.append(g.name)
+        self.inventory.remove_host(host)
+        self.inventory.add_host(new_name)
+        new_host = self.inventory.get_host(new_name)
+        new_host._uuid = host._uuid
+        if host.address == host.name:
+            new_host.address = new_name
+        new_host.vars = host.vars
+        for group in group_names:
+            self.inventory.add_child(group, new_name)

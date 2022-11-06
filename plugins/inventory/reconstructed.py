@@ -505,7 +505,7 @@ class RcInstruction(abc.ABC):
         """
         raise NotImplementedError
 
-    def run_for(self, host_name, variables):
+    def run_for(self, host_name, context):
         """Execute the instruction for a given host.
 
         This method is the entry point for instruction execution. Depending on
@@ -515,7 +515,7 @@ class RcInstruction(abc.ABC):
 
         Args:
             host_name: the name of the host to execute the instruction for
-            variables: the variable storage instance
+            context: the execution context
 
         Returns:
             ``True`` if execution must continue, ``False`` if it must be
@@ -526,40 +526,40 @@ class RcInstruction(abc.ABC):
         if self._executed_once is False:
             self._executed_once = True
         # Save previous loop and local variables state
-        variables._script_stack_push(self._save)
+        context.variables._script_stack_push(self._save)
         try:
             # Instructions without loops
             if self._loop is None:
                 self._display.vvvv("%s : running action %s" % (host_name, self._action))
-                return self.run_iteration(host_name, variables)
+                return self.run_iteration(host_name, context)
             # Loop over all values
-            for value in self.evaluate_loop(host_name, variables):
+            for value in self.evaluate_loop(host_name, context.variables):
                 self._display.vvvv(
                     "%s : running action %s for item %s"
                     % (host_name, self._action, repr(value))
                 )
-                variables[self._loop_var] = value
-                if not self.run_iteration(host_name, variables):
+                context.variables[self._loop_var] = value
+                if not self.run_iteration(host_name, context):
                     return False
             return True
         finally:
             # Restore loop variable state
-            variables._script_stack_pop()
+            context.variables._script_stack_pop()
 
-    def run_iteration(self, host_name, variables):
+    def run_iteration(self, host_name, context):
         """Check the condition if it exists, then run the instruction.
 
         Args:
             host_name: the name of the host to execute the instruction for
-            variables: the variable storage instance
+            context: the execution context
 
         Returns:
             ``True`` if execution must continue, ``False`` if it must be
             interrupted
         """
-        self.compute_locals(variables)
-        if self.evaluate_condition(host_name, variables):
-            rv = self.execute_action(host_name, variables)
+        self.compute_locals(context.variables)
+        if self.evaluate_condition(host_name, context.variables):
+            rv = self.execute_action(host_name, context)
             if not rv:
                 self._display.vvvvv(
                     "%s : action %s returned False, stopping"
@@ -670,7 +670,7 @@ class RcInstruction(abc.ABC):
         return real_name
 
     @abc.abstractmethod
-    def execute_action(self, host_name, variables):
+    def execute_action(self, host_name, context):
         """Execute the instruction.
 
         This method must be overridden to implement the actual action of the
@@ -678,10 +678,7 @@ class RcInstruction(abc.ABC):
 
         Args:
             host_name: the name of the host to execute the instruction for
-            merged_vars: the variable cache, with local script variables \
-                taking precedence over host facts.
-            host_vars: the host's facts, as a mapping
-            script_vars: the current script variables, as a mapping
+            context: the execution context for the current host
 
         Return:
             ``True`` if the script's execution should continue, ``False`` if
@@ -719,7 +716,7 @@ class RciCreateGroup(RcInstruction):
                 record, "parent"
             )
 
-    def execute_action(self, host_name, variables):
+    def execute_action(self, host_name, context):
         assert not (
             self._group_mbt is None
             or self._group_name is None
@@ -727,9 +724,11 @@ class RciCreateGroup(RcInstruction):
         )
         if self._parent_name is not None:
             parent = self.get_templated_group(
-                variables, self._parent_mbt, self._parent_name, must_exist=True
+                context.variables, self._parent_mbt, self._parent_name, must_exist=True
             )
-        name = self.get_templated_group(variables, self._group_mbt, self._group_name)
+        name = self.get_templated_group(
+            context.variables, self._group_mbt, self._group_name
+        )
         self._inventory.add_group(name)
         self._display.vvv("- created group %s" % (name,))
         if self._parent_name is not None:
@@ -756,10 +755,10 @@ class RciAddHost(RcInstruction):
         assert self._may_be_template is None and self._group is None
         self._may_be_template, self._group = self.parse_group_name(record, "group")
 
-    def execute_action(self, host_name, variables):
+    def execute_action(self, host_name, context):
         assert not (self._may_be_template is None or self._group is None)
         name = self.get_templated_group(
-            variables, self._may_be_template, self._group, must_exist=True
+            context.variables, self._may_be_template, self._group, must_exist=True
         )
         self._inventory.add_child(name, host_name)
         self._display.vvv("- added host %s to %s" % (host_name, name))
@@ -789,14 +788,14 @@ class RciAddChild(RcInstruction):
         self._group_mbt, self._group_name = self.parse_group_name(record, "group")
         self._child_mbt, self._child_name = self.parse_group_name(record, "child")
 
-    def execute_action(self, host_name, variables):
+    def execute_action(self, host_name, context):
         assert not (self._group_mbt is None or self._group_name is None)
         assert not (self._child_mbt is None or self._child_name is None)
         group = self.get_templated_group(
-            variables, self._group_mbt, self._group_name, must_exist=True
+            context.variables, self._group_mbt, self._group_name, must_exist=True
         )
         child = self.get_templated_group(
-            variables, self._child_mbt, self._child_name, must_exist=True
+            context.variables, self._child_mbt, self._child_name, must_exist=True
         )
         self._inventory.add_child(group, child)
         self._display.vvv("- added group %s to %s" % (child, group))
@@ -843,13 +842,13 @@ class RciSetVarOrFact(RcInstruction):
         self._var_name = name
         self._var_value = record["value"]
 
-    def execute_action(self, host_name, variables):
+    def execute_action(self, host_name, context):
         assert not (
             self._var_name is None
             or self._name_may_be_template is None
             or self._var_value is None
         )
-        self._templar.available_variables = variables
+        self._templar.available_variables = context.variables
         if self._name_may_be_template:
             name = self._templar.template(self._var_name)
             if not isinstance(name, string_types):
@@ -866,9 +865,9 @@ class RciSetVarOrFact(RcInstruction):
         value = self._templar.template(self._var_value)
         if self._is_fact:
             self._inventory.set_variable(host_name, name, value)
-            variables._set_host_var(name, value)
+            context.variables._set_host_var(name, value)
         else:
-            variables[name] = value
+            context.variables[name] = value
         self._display.vvv(
             "- set %s %s to %s"
             % ("fact" if self._is_fact else "var", name, repr(value))
@@ -885,7 +884,7 @@ class RciStop(RcInstruction):
     def parse_action(self, record):
         pass
 
-    def execute_action(self, host_name, variables):
+    def execute_action(self, host_name, context):
         self._display.vvv("- stopped execution")
         return False
 
@@ -906,11 +905,11 @@ class RciFail(RcInstruction):
     def parse_action(self, record):
         self._message = record.get("msg", None)
 
-    def execute_action(self, host_name, variables):
+    def execute_action(self, host_name, context):
         if self._message is None:
             message = "fail requested (%s)" % (host_name,)
         else:
-            self._templar.available_variables = variables
+            self._templar.available_variables = context.variables
             message = self._templar.template(self._message)
         self._display.vvv("- failed with message %s" % (message,))
         raise AnsibleRuntimeError(message)
@@ -1000,24 +999,24 @@ class RciBlock(RcInstruction):
             )
         return instructions
 
-    def execute_action(self, host_name, variables):
+    def execute_action(self, host_name, context):
         assert not (self._block is None or self._rescue is None or self._always is None)
         try:
             try:
                 self._display.vvv("- running 'block' instructions")
-                return self.run_section(self._block, host_name, variables)
+                return self.run_section(self._block, host_name, context)
             except AnsibleError as e:
                 if not self._rescue:
                     self._display.vvv("- block failed")
                     raise
                 self._display.vvv("- block failed, running 'rescue' instructions")
-                variables["reconstructed_error"] = str(e)
-                return self.run_section(self._rescue, host_name, variables)
+                context.variables["reconstructed_error"] = str(e)
+                return self.run_section(self._rescue, host_name, context)
         finally:
             self._display.vvv("- block exited, running 'always' instructions")
-            self.run_section(self._always, host_name, variables)
+            self.run_section(self._always, host_name, context)
 
-    def run_section(self, section, host_name, variables):
+    def run_section(self, section, host_name, context):
         """Execute a single section.
 
         This method executes the sequence of instructions in a single section.
@@ -1025,14 +1024,14 @@ class RciBlock(RcInstruction):
         Args:
             section: the list of instructions
             host_name: the name of the host being processed
-            variables: the variable storage area
+            context: the execution context for the current host
 
         Returns:
             ``True`` if the script's execution should continue, ``False`` if it
             should be interrupted
         """
         for instruction in section:
-            if not instruction.run_for(host_name, variables):
+            if not instruction.run_for(host_name, context):
                 return False
         return True
 
@@ -1105,9 +1104,9 @@ class InventoryModule(BaseInventoryPlugin):
         if not any(g.name == "all" for g in host_groups):
             host_groups.append(self.inventory.groups["all"])
         group_vars = get_group_vars(host_groups)
-        variables = VariableStorage(combine_vars(group_vars, host_vars))
+        context = Context(combine_vars(group_vars, host_vars))
         for instruction in instructions:
-            if not instruction.run_for(host, variables):
+            if not instruction.run_for(host, context):
                 return
 
     def dump_program(self, instructions):
